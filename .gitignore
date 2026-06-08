@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Data files (large OHLC JSON — fetch locally via Bitkub/Binance API)
+data/
+
+# Build output
+dist/
+
+# Backtest output cache
+output*.json
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+.vscode

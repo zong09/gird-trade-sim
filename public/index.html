@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grid Trading Simulation</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; font-size: 14px; }
+
+  header { background: #0f172a; color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header span { font-size: 12px; color: #64748b; }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 52px); }
+
+  .sidebar { background: #fff; border-right: 1px solid #e2e8f0; padding: 20px 16px; overflow-y: auto; }
+  .sidebar h2 { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; margin-bottom: 14px; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: #64748b; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; color: #1e293b; background: #f8fafc; outline: none; }
+  .field input:focus, .field select:focus { border-color: #3b82f6; background: #fff; }
+  .field select { width: 100%; padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; color: #1e293b; background: #f8fafc; outline: none; }
+  .section-title { font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: #94a3b8; margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid #f1f5f9; }
+  .btn-run { width: 100%; padding: 10px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 18px; transition: background .15s; }
+  .btn-run:hover { background: #2563eb; }
+  .btn-run:disabled { background: #93c5fd; cursor: not-allowed; }
+
+  .main { padding: 24px; overflow-y: auto; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 12px; }
+  .kpi-row2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
+  .kpi .label { font-size: 11px; color: #94a3b8; margin-bottom: 6px; letter-spacing: .5px; text-transform: uppercase; }
+  .kpi .value { font-size: 22px; font-weight: 700; }
+  .kpi .value.green { color: #10b981; }
+  .kpi .value.red   { color: #ef4444; }
+  .kpi .sub { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+  .card h3 { font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 14px; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 6px 8px; color: #94a3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #f1f5f9; }
+  td { padding: 7px 8px; border-bottom: 1px solid #f8fafc; }
+  tr:last-child td { border-bottom: none; }
+  .badge { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; padding:2px 6px; border-radius:4px; margin-left:4px; vertical-align:middle; }
+  .badge-balanced   { background:#dbeafe; color:#1d4ed8; }
+  .badge-safe       { background:#dcfce7; color:#15803d; }
+  .badge-aggressive { background:#fef3c7; color:#b45309; }
+
+  .rec-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-top: 14px; }
+  .rec-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; position: relative; }
+  .rec-card.rc-balanced   { border-color: #1d4ed8; border-width: 2px; }
+  .rec-card.rc-safe       { border-color: #15803d; border-width: 2px; }
+  .rec-card.rc-aggressive { border-color: #b45309; border-width: 2px; }
+
+  .rec-pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 12px; border-radius: 20px; margin-bottom: 10px; }
+  .rc-balanced   .rec-pill { background: #dbeafe; color: #1d4ed8; }
+  .rc-safe       .rec-pill { background: #dcfce7; color: #15803d; }
+  .rc-aggressive .rec-pill { background: #fef3c7; color: #b45309; }
+
+  .rec-subtitle { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
+  .rec-apy { font-size: 28px; font-weight: 800; line-height: 1; margin-bottom: 2px; }
+  .rec-apy-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+  .rec-desc { font-size: 12px; color: #64748b; margin-bottom: 14px; line-height: 1.5; }
+  .rc-balanced   .rec-apy { color: #1d4ed8; }
+  .rc-safe       .rec-apy { color: #15803d; }
+  .rc-aggressive .rec-apy { color: #b45309; }
+
+  .rec-divider { border: none; border-top: 1px solid #f1f5f9; margin: 0 0 12px; }
+  .rec-kv { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rec-kv td { padding: 5px 0; }
+  .rec-kv td:first-child { color: #94a3b8; }
+  .rec-kv td:last-child  { text-align: right; font-weight: 600; color: #1e293b; }
+  .rec-kv tr:not(:last-child) td { border-bottom: 1px solid #f8fafc; }
+
+  .legend { display: flex; gap: 16px; margin-bottom: 10px; font-size: 12px; color: #64748b; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  #scenarioTabs button:hover { opacity: .85; }
+  .status { text-align: center; padding: 60px; color: #94a3b8; }
+  .spinner { display: inline-block; width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-box { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 12px 16px; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="dashTitle">Grid Trading Simulation</h1>
+  <span id="ts"></span>
+</header>
+
+<div class="layout">
+  <div class="sidebar">
+    <h2>Config</h2>
+    <div class="field">
+      <label>Asset</label>
+      <select id="asset"></select>
+    </div>
+    <div class="field"><label>Trading Fee (%)</label><input type="number" id="feeRate" step="0.01"></div>
+
+    <div class="section-title">Backtest Period</div>
+    <div class="field"><label>Start</label><input type="date" id="bt-start"></div>
+    <div class="field"><label>End</label><input type="date" id="bt-end"></div>
+
+    <div class="section-title">Auto Grid Config</div>
+    <div class="field"><label>Width % (±X% from first price)</label><input type="number" id="widthPct" min="20" max="200" step="10"></div>
+    <div class="field"><label>No. of Grids <small style="color:#94a3b8">(blank = auto)</small></label><input type="number" id="numGrids" min="5" max="200" step="5" placeholder="auto"></div>
+
+    <div class="section-title">Simulation</div>
+    <div class="field"><label>Target APY (%)</label><input type="number" id="targetApy" step="1"></div>
+    <div class="field"><label>No. of Simulations</label><input type="number" id="numSims" step="50"></div>
+    <div class="field"><label id="targetProfitLabel">Target Profit (/year)</label><input type="number" id="targetProfit" step="100"></div>
+    <div class="field">
+      <label>Bull Drift (%/year) <small style="color:#94a3b8">(0 = off)</small></label>
+      <input type="number" id="bullDrift" min="0" max="500" step="10">
+      <small style="color:#94a3b8;line-height:1.5;display:block;margin-top:4px">
+        Grid center = current price × √(1 + drift%)<br>
+        e.g. drift 80% → center shifts +34% (√1.8)<br>
+        Positions the grid where price is likely to trade during the year.
+      </small>
+    </div>
+
+    <button class="btn-run" id="btnRun" onclick="runAll()">▶ Run</button>
+  </div>
+
+  <div class="main" id="main">
+    <div class="status"><p>Press Run to start backtest and simulation</p></div>
+  </div>
+</div>
+
+<script>
+let charts = {};
+
+async function loadConfig() {
+  const c   = await fetch('/api/config').then(r => r.json());
+  const sel = document.getElementById('asset');
+  sel.innerHTML = c.assets.map(a => `<option value="${a.name}">${a.name}</option>`).join('');
+  const updateAssetUI = () => {
+    const picked = c.assets.find(a => a.name === sel.value);
+    if (!picked) return;
+    const quote = picked.name.split('/')[1] ?? 'THB';
+    document.getElementById('targetProfitLabel').textContent = `Target Profit (${quote}/year)`;
+    document.getElementById('dashTitle').textContent = `Grid Trading Simulation — ${picked.name}`;
+  };
+  sel.onchange = updateAssetUI;
+  updateAssetUI();
+  document.getElementById('feeRate').value = (c.feeRate * 100).toFixed(2);
+  document.getElementById('bt-start').value     = c.backtest.period.start ?? '';
+  document.getElementById('bt-end').value       = c.backtest.period.end   ?? '';
+  document.getElementById('widthPct').value     = c.backtest.auto?.widthPct ?? 100;
+  document.getElementById('numGrids').value     = c.backtest.auto?.numGrids ?? '';
+  document.getElementById('targetApy').value    = c.simulation.targetApy;
+  document.getElementById('numSims').value      = c.simulation.numSims;
+  document.getElementById('targetProfit').value = c.simulation.targetProfit ?? '';
+  const bullScenario = (c.simulation.scenarios ?? []).find(s => s.annualDrift > 0);
+  document.getElementById('bullDrift').value = bullScenario ? bullScenario.annualDrift : 0;
+}
+
+function buildConfig(base) {
+  base.feeRate    = +document.getElementById('feeRate').value / 100;
+  base.backtest.period.start = document.getElementById('bt-start').value;
+  base.backtest.period.end   = document.getElementById('bt-end').value;
+  if (base.backtest.auto) {
+    base.backtest.auto.widthPct  = +document.getElementById('widthPct').value;
+    const ng = document.getElementById('numGrids').value;
+    if (ng) base.backtest.auto.numGrids = +ng;
+    else    delete base.backtest.auto.numGrids;
+  }
+  base.simulation.targetApy    = +document.getElementById('targetApy').value;
+  base.simulation.numSims      = +document.getElementById('numSims').value;
+  base.simulation.targetProfit = +document.getElementById('targetProfit').value || null;
+  const drift = +document.getElementById('bullDrift').value;
+  if (drift > 0) {
+    base.simulation.scenarios = [
+      { label: 'Base', annualDrift: 0 },
+      { label: `Bull +${drift}%`, annualDrift: drift },
+    ];
+  } else {
+    base.simulation.scenarios = [{ label: 'Base', annualDrift: 0 }];
+  }
+  return base;
+}
+
+async function runAll() {
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true; btn.textContent = 'Running…';
+  document.getElementById('main').innerHTML = '<div class="status"><div class="spinner"></div><p style="margin-top:16px">Running backtest + simulation…</p></div>';
+  try {
+    const base = await fetch('/api/config').then(r => r.json());
+    await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(buildConfig(base)) });
+    const asset = document.getElementById('asset').value;
+    const data  = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ asset }) }).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    renderDashboard(data);
+    document.getElementById('ts').textContent = new Date().toLocaleTimeString('en-GB');
+  } catch(e) {
+    document.getElementById('main').innerHTML = `<div class="error-box">Error: ${e.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = '▶ Run';
+}
+
+const fmt = n => Math.round(n).toLocaleString('en-US');
+
+let _dashData = null;
+
+function renderDashboard(data) {
+  _dashData = data;
+  const bt  = data.backtest;
+  const Q   = data.quote || 'THB';
+  const maxP = Math.max(...bt.snapshots.map(s => s.price));
+  const [pDiv, pSuffix] = maxP >= 1e6 ? [1e6, 'M'] : maxP >= 1e3 ? [1e3, 'K'] : [1, ''];
+
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+
+  const autoNote = data.autoGridParams
+    ? ` <small style="color:#3b82f6">(auto ±${document.getElementById('widthPct').value / 2}%)</small>` : '';
+  document.getElementById('dashTitle').textContent = `Grid Trading Simulation — ${data.asset}`;
+
+  document.getElementById('main').innerHTML = `
+    <!-- Backtest Section -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="background:#0f172a;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Backtest</span>
+      <span style="font-size:12px;color:#94a3b8">${document.getElementById('bt-start').value} → ${document.getElementById('bt-end').value} · Historical data</span>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Realized APY</div><div class="value green">${bt.apy}%</div><div class="sub">Profit ${fmt(bt.pnl)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Total APY (incl. Unrealized)</div><div class="value ${bt.totalApy >= 0 ? 'green' : 'red'}">${bt.totalApy}%</div><div class="sub">Unrealized ${bt.unrealized >= 0 ? '+' : ''}${fmt(bt.unrealized)} ${Q} · Total ${fmt(bt.totalPnl)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmt(bt.minPrice)} – ${fmt(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmt(bt.spacing)} ${Q}</div></div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Trading Volume</div><div class="value" style="font-size:18px">${fmt(bt.volume)} ${Q}</div><div class="sub">${(bt.volume / bt.investment).toFixed(1)}× capital turnover · ${fmt(bt.volume / (bt.trades / 2))} ${Q}/round trip avg</div></div>
+      <div class="kpi"><div class="label">Trades</div><div class="value">${bt.trades}</div><div class="sub">${bt.trades/2} round trips · fees ${fmt(bt.fees)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Fee Rate</div><div class="value" style="font-size:18px">${(bt.feeRate*100).toFixed(2)}%</div><div class="sub">Profit/round trip ${bt.profitPerRoundTrip}%</div></div>
+    </div>
+
+    <!-- Chart 1: Cumulative Returns -->
+    <div class="card">
+      <h3>Cumulative Returns — Grid Trading vs Buy &amp; Hold</h3>
+      <div class="legend">
+        <span><span class="dot" style="background:#10b981"></span>Grid Trading</span>
+        <span><span class="dot" style="background:#ef4444;"></span>Buy &amp; Hold</span>
+        <span><span class="dot" style="background:#3b82f6;opacity:.5"></span>${data.asset} Price (right axis)</span>
+      </div>
+      <div style="position:relative;height:280px"><canvas id="chartReturns"></canvas></div>
+    </div>
+
+    <!-- Simulation Section -->
+    <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
+      <span style="background:#1e40af;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Monte Carlo Simulation</span>
+      <span style="font-size:12px;color:#94a3b8">${document.getElementById('numSims').value} simulations · 1-year forward projection</span>
+    </div>
+
+    <!-- Scenario Tabs -->
+    <div id="scenarioTabs" style="display:flex;gap:6px;margin-bottom:14px"></div>
+
+    <!-- Chart 2: Sim table + Chart 3: Confidence bands -->
+    <div class="row2" style="margin-bottom:16px">
+      <div class="card" style="margin-bottom:0">
+        <h3>Simulation Results</h3>
+        <table>
+          <thead><tr><th>Config</th><th>P10</th><th>P25</th><th>Med</th><th>P75</th><th>P90</th><th>P(≥${document.getElementById('targetApy').value}%)</th></tr></thead>
+          <tbody id="simTable"></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <h3>APY Confidence Bands (P10 → P90)</h3>
+        <div style="position:relative;height:220px"><canvas id="chartBands"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Chart 4: P(>=target%) bar -->
+    <div class="card">
+      <h3>Probability of achieving APY ≥ ${document.getElementById('targetApy').value}% per config</h3>
+      <div style="position:relative;height:160px"><canvas id="chartProb"></canvas></div>
+    </div>
+
+    <!-- Recommendations -->
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <span style="background:#064e3b;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Recommendations</span>
+        <span style="font-size:12px;color:#94a3b8">From simulation · target ${document.getElementById('targetApy').value}% APY</span>
+      </div>
+      <div class="rec-grid" id="recGrid" style="margin-top:16px"></div>
+    </div>
+  `;
+
+  // ── Chart 1: Cumulative returns ──────────────────────────────────────────
+  const snaps  = bt.snapshots;
+  const labels = snaps.map(s => s.date.slice(5));
+  const ctx1   = document.getElementById('chartReturns').getContext('2d');
+  charts.returns = new Chart(ctx1, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Grid Trading',
+          data: snaps.map(s => s.gridPct),
+          borderColor: '#10b981', borderWidth: 2.5,
+          pointRadius: 0, tension: 0.4, yAxisID: 'y',
+        },
+        {
+          label: 'Buy & Hold',
+          data: snaps.map(s => s.bhPct),
+          borderColor: '#ef4444', borderWidth: 2,
+          pointRadius: 0, tension: 0.3,
+          borderDash: [6, 3], yAxisID: 'y',
+        },
+        {
+          label: `${data.asset} Price`,
+          data: snaps.map(s => s.price / pDiv),
+          borderColor: '#3b82f6', borderWidth: 1,
+          pointRadius: 0, tension: 0.3,
+          borderDash: [2, 2], yAxisID: 'y2',
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => c.datasetIndex < 2 ? ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(2)}%` : ` ${data.asset}: ${c.parsed.y.toFixed(2)}${pSuffix} ${Q}` } }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+        y: { position: 'left', grid: { color: '#f1f5f9' }, ticks: { callback: v => (v >= 0 ? '+' : '') + v + '%', font: { size: 11 } } },
+        y2: { position: 'right', grid: { display: false }, ticks: { callback: v => v.toFixed(pDiv >= 1e6 ? 1 : 0) + pSuffix, font: { size: 10 }, color: '#93c5fd' } },
+      }
+    }
+  });
+
+  // ── Build scenario tabs ──────────────────────────────────────────────────
+  const tabsEl = document.getElementById('scenarioTabs');
+  data.scenarios.forEach((sc, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = sc.annualDrift > 0 ? `${sc.label} (drift +${sc.annualDrift}%)` : sc.label;
+    btn.style.cssText = `padding:5px 14px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s`;
+    btn.onclick = () => {
+      document.querySelectorAll('#scenarioTabs button').forEach(b => {
+        b.style.background = '#f8fafc'; b.style.color = '#475569'; b.style.borderColor = '#e2e8f0';
+      });
+      btn.style.background = '#1e40af'; btn.style.color = '#fff'; btn.style.borderColor = '#1e40af';
+      renderScenario(data.scenarios[i], data.quote || 'THB');
+    };
+    if (i === 0) { btn.style.background = '#1e40af'; btn.style.color = '#fff'; btn.style.borderColor = '#1e40af'; }
+    else { btn.style.background = '#f8fafc'; btn.style.color = '#475569'; }
+    tabsEl.appendChild(btn);
+  });
+
+  renderScenario(data.scenarios[0], Q);
+}
+
+const pillLabel = {
+  balanced:   'Best chance of hitting target',
+  safe:       'Lowest risk',
+  aggressive: 'Highest return',
+};
+const stratDesc = {
+  balanced:   'Balanced between return and risk.',
+  safe:       'Wide range, best drawdown tolerance.',
+  aggressive: 'High median APY but high variance.',
+};
+const widthLabel = w => { const n = parseFloat(w); return n >= 70 ? 'VERY WIDE' : n >= 50 ? 'WIDE' : n >= 30 ? 'MID' : 'NARROW'; };
+const p10Display = p10 => {
+  if (p10 >= 5) return `<span style="color:#15803d">+${p10}% <small>(never negative)</small></span>`;
+  if (p10 >= 1) return `<span style="color:#15803d">+${p10}%</span>`;
+  if (p10 >= 0) return `<span style="color:#b45309">+${p10}% <small>(near breakeven)</small></span>`;
+  return `<span style="color:#dc2626">${p10}% <small>(negative)</small></span>`;
+};
+
+function renderScenario(sc, Q) {
+  const sim  = sc.simulation;
+  const recs = sc.recommendations;
+  const tApy = document.getElementById('targetApy').value;
+
+  ['bands','prob'].forEach(k => { if (charts[k]) { charts[k].destroy(); delete charts[k]; } });
+
+  // ── Sim table ──────────────────────────────────────────────────────────
+  const recMap = {};
+  recs.forEach(r => { if (!recMap[r.label]) recMap[r.label] = []; recMap[r.label].push(r.strategy); });
+  const tbody = document.getElementById('simTable');
+  tbody.innerHTML = '';
+  sim.forEach(r => {
+    const tr = document.createElement('tr');
+    const badges = (recMap[r.label] || []).map(s => `<span class="badge badge-${s}">${s}</span>`).join('');
+    tr.innerHTML = `<td>${r.label}${badges}</td><td>${r.p10}%</td><td>${r.p25}%</td><td><b>${r.median}%</b></td><td>${r.p75}%</td><td>${r.p90}%</td><td>${r.probAboveTarget}%</td>`;
+    if (recMap[r.label]) tr.style.background = '#f8fafc';
+    tbody.appendChild(tr);
+  });
+
+  // ── Chart 3: Confidence bands ──────────────────────────────────────────
+  const colors = sim.map(r => recMap[r.label] ? 'rgba(16,185,129,0.7)' : 'rgba(59,130,246,0.5)');
+  charts.bands = new Chart(document.getElementById('chartBands').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: sim.map(r => r.label),
+      datasets: [
+        { label: 'P10–P90 range', data: sim.map(r => [r.p10, r.p90]), backgroundColor: colors, borderColor: colors.map(c => c.replace(/[\d.]+\)$/, '1)')), borderWidth: 1, borderRadius: 4 },
+        { label: 'Median', data: sim.map(r => r.median), type: 'line', borderColor: '#f59e0b', borderWidth: 2, pointBackgroundColor: '#f59e0b', pointRadius: 5, pointHoverRadius: 7, tension: 0, fill: false, yAxisID: 'y' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { size: 11 }, boxWidth: 10 } }, tooltip: { callbacks: { label: c => c.dataset.label === 'Median' ? ` Median: ${c.parsed.y.toFixed(1)}%` : ` Range: ${sim[c.dataIndex].p10}% – ${sim[c.dataIndex].p90}%` } } },
+      scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { callback: v => v + '%' }, grid: { color: '#f1f5f9' } } }
+    }
+  });
+
+  // ── Chart 4: P(>=target%) ──────────────────────────────────────────────
+  charts.prob = new Chart(document.getElementById('chartProb').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: sim.map(r => r.label),
+      datasets: [{ label: `P(≥${tApy}% APY)`, data: sim.map(r => r.probAboveTarget), backgroundColor: sim.map(r => recMap[r.label] ? '#10b981' : '#bfdbfe'), borderColor: sim.map(r => recMap[r.label] ? '#059669' : '#93c5fd'), borderWidth: 1, borderRadius: 4 }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` Prob ≥${tApy}%: ${c.parsed.x}%` } } },
+      scales: { x: { min: 0, max: 100, ticks: { callback: v => v + '%', font: { size: 11 } }, grid: { color: '#f1f5f9' } }, y: { ticks: { font: { size: 11 } } } }
+    }
+  });
+
+  // ── Recommendations ────────────────────────────────────────────────────
+  const recGrid = document.getElementById('recGrid');
+  recGrid.innerHTML = '';
+  recs.forEach(r => {
+    const wMatch = r.label.match(/±(\d+)%/);
+    const wLabel = wMatch ? widthLabel(wMatch[1]) : r.label;
+    const card   = document.createElement('div');
+    card.className = `rec-card rc-${r.strategy}`;
+    card.innerHTML = `
+      <div class="rec-pill">${pillLabel[r.strategy]}</div>
+      <div class="rec-subtitle">${wLabel} · ${r.numGrids} grids</div>
+      <div class="rec-apy">${r.expectedApy}%</div>
+      <div class="rec-apy-label">Median APY</div>
+      <div class="rec-desc">${stratDesc[r.strategy]}</div>
+      <hr class="rec-divider">
+      <table class="rec-kv">
+        <tr><td>Min / Max</td><td>${fmt(r.minPrice)} – ${fmt(r.maxPrice)} ${Q}</td></tr>
+        <tr><td>No. of grids</td><td>${r.numGrids}</td></tr>
+        <tr><td>P25 – P75</td><td>${r.p25}% – ${r.p75}%</td></tr>
+        <tr><td>Prob ≥ ${tApy}%</td><td>${r.probAboveTarget}%</td></tr>
+        <tr><td>Profit/round trip</td><td>${r.profitPerRoundTrip}%</td></tr>
+        <tr><td>Trades/year (avg)</td><td>${r.avgTradesPerYear.toLocaleString()}</td></tr>
+        <tr><td>Worst case (P10)</td><td>${p10Display(r.p10)}</td></tr>
+        ${r.investment ? `<tr><td>Required capital</td><td>${fmt(r.investment)} ${Q}</td></tr><tr><td>Est. annual profit</td><td>~${fmt(r.annualProfit)} ${Q}</td></tr>` : ''}
+      </table>`;
+    recGrid.appendChild(card);
+  });
+}
+
+loadConfig();
+</script>
+</body>
+</html>

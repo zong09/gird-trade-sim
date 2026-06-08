@@ -1,0 +1,72 @@
+{
+  "assets": [
+    {
+      "name": "BTC/THB",
+      "dataFile": "./data/btc_thb.json"
+    },
+    {
+      "name": "ETH/THB",
+      "dataFile": "./data/eth_thb.json"
+    },
+    {
+      "name": "BTC/USDT",
+      "dataFile": "./data/btc_usdt.json"
+    }
+  ],
+  "feeRate": 0.0025,
+  "backtest": {
+    "period": {
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    "auto": {
+      "widthPct": 100,
+      "numGridsOptions": [
+        10,
+        15,
+        20,
+        25,
+        30,
+        40,
+        50
+      ],
+      "numGrids": 54
+    }
+  },
+  "simulation": {
+    "trainingPeriod": {
+      "start": "2024-06-01"
+    },
+    "targetApy": 8,
+    "targetProfit": 500,
+    "numSims": 300,
+    "hoursAhead": 8760,
+    "blockSize": 48,
+    "seed": 42,
+    "autoParamSets": {
+      "widthPcts": [
+        40,
+        60,
+        80,
+        100,
+        120
+      ],
+      "numGridsOptions": [
+        20,
+        30,
+        40,
+        50
+      ]
+    },
+    "scenarios": [
+      {
+        "label": "Base",
+        "annualDrift": 0
+      },
+      {
+        "label": "Bull +80%",
+        "annualDrift": 80
+      }
+    ]
+  }
+}
