@@ -11,13 +11,17 @@
     {
       "name": "BTC/USDT",
       "dataFile": "./data/btc_usdt.json"
+    },
+    {
+      "name": "ETH/USDT",
+      "dataFile": "./data/eth_usdt.json"
     }
   ],
   "feeRate": 0.0025,
   "backtest": {
     "period": {
-      "start": "2025-01-01",
-      "end": "2025-12-31"
+      "start": "2025-05-31",
+      "end": "2026-05-31"
     },
     "auto": {
       "widthPct": 100,
