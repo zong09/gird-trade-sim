@@ -17,12 +17,40 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 npm install
 ```
 
-Place OHLC JSON files in `data/` (not included in repo):
+Place OHLC JSON files in `data/` (not included in repo). File paths are configured in `config.json` under each asset's `dataFile` field.
 
+### Supported JSON formats
+
+The loader auto-detects the format:
+
+**Format 1 — aggregated_point** (hourly candle with nested minute raw_points)
+```json
+[
+  {
+    "timestamp": { "$numberLong": "1748649600" },
+    "aggregated_point": ["1748649600", "2532.3", "2540.9", "2504.3", "2520.1", "0", "B2C2"],
+    "raw_points": [
+      ["1748649600", "2532.3", "2536.1", "2530.1", "2534.6", "0", "B2C2"],
+      ...
+    ]
+  }
+]
 ```
-data/btc_ohlc_service.hour_ohlc_chart_data.json
-data/eth_ohlc_service.hour_ohlc_chart_data.json
-data/btc_usdt_ohlc_service.hour_ohlc_chart_data.json
+Fields: `[timestamp, open, high, low, close, volume, exchange]`
+
+**Format 2 — raw_points only** (array of minute candles per record)
+```json
+[{ "raw_points": [["ts", "open", "high", "low", "close"], ...] }]
+```
+
+**Format 3 — flat array of arrays**
+```json
+[["ts", "open", "high", "low", "close"], ...]
+```
+
+**Format 4 — flat array of Candle objects**
+```json
+[{ "ts": 1234567890, "open": 100, "high": 105, "low": 99, "close": 102 }]
 ```
 
 ## Usage

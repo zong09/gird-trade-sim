@@ -18,6 +18,12 @@ export function loadCandles(filePath: string, period: Period = {}): Candle[] {
       for (const r of raw)
         for (const p of r.raw_points)
           candles.push({ ts: +p[0], open: +p[1], high: +p[2], low: +p[3], close: +p[4] });
+    } else if (first?.aggregated_point) {
+      // format: { timestamp: { $numberLong: "..." }, aggregated_point: [ts, open, high, low, close, ...] }
+      for (const r of raw) {
+        const p = r.aggregated_point;
+        candles.push({ ts: +p[0], open: +p[1], high: +p[2], low: +p[3], close: +p[4] });
+      }
     } else if (Array.isArray(first)) {
       candles = raw.map((p: number[]) => ({ ts: +p[0], open: +p[1], high: +p[2], low: +p[3], close: +p[4] }));
     } else {
