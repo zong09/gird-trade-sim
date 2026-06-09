@@ -23,6 +23,7 @@ export interface WeeklySnapshot {
 
 export interface BacktestResult extends GridParams {
   feeRate: number;
+  firstPrice: number;
   pnl: number;
   fees: number;
   trades: number;

@@ -91,6 +91,7 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
 
   return {
     minPrice, maxPrice, numGrids, investment, feeRate,
+    firstPrice:        +candles[0].open.toFixed(2),
     pnl:               +pnl.toFixed(2),
     fees:              +fees.toFixed(2),
     trades,

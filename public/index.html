@@ -233,7 +233,7 @@ function renderDashboard(data) {
     <div class="kpi-row">
       <div class="kpi"><div class="label">Realized APY</div><div class="value green">${bt.apy}%</div><div class="sub">Profit ${fmt(bt.pnl)} ${Q}</div></div>
       <div class="kpi"><div class="label">Total APY (incl. Unrealized)</div><div class="value ${bt.totalApy >= 0 ? 'green' : 'red'}">${bt.totalApy}%</div><div class="sub">Unrealized ${bt.unrealized >= 0 ? '+' : ''}${fmt(bt.unrealized)} ${Q} · Total ${fmt(bt.totalPnl)} ${Q}</div></div>
-      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmt(bt.minPrice)} – ${fmt(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmt(bt.spacing)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmt(bt.minPrice)} – ${fmt(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmt(bt.spacing)} ${Q} · first price ${fmt(bt.firstPrice)} ${Q}</div></div>
     </div>
     <div class="kpi-row">
       <div class="kpi"><div class="label">Trading Volume</div><div class="value" style="font-size:18px">${fmt(bt.volume)} ${Q}</div><div class="sub">${(bt.volume / bt.investment).toFixed(1)}× capital turnover · ${fmt(bt.volume / (bt.trades / 2))} ${Q}/round trip avg</div></div>
