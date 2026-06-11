@@ -8,12 +8,14 @@
     "server": "ts-node server.ts"
   },
   "devDependencies": {
+    "@types/multer": "^2.1.0",
     "@types/node": "^20.12.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   },
   "dependencies": {
     "@types/express": "^5.0.6",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "multer": "^2.1.1"
   }
 }

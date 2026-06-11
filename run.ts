@@ -51,7 +51,7 @@ for (const asset of assetsToRun) {
   const scenarios = sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }];
   const opts      = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
 
-  const scenarioResults = scenarios.map(sc => {
+  for (const sc of scenarios) {
     const paramSets = autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift);
     console.log(`\n── Monte Carlo [${sc.label}]  drift=${sc.annualDrift}%  sims=${sim.numSims}  paramSets=${paramSets.length}`);
     const simResults = runMonteCarlo({
@@ -85,13 +85,5 @@ for (const asset of assetsToRun) {
       console.log(`  [${r.strategy.toUpperCase()}]  ${r.label}  APY ${r.expectedApy}%  P10 ${r.p10}%  P(≥${sim.targetApy}%) ${r.probAboveTarget}%`);
       if (r.investment) console.log(`           investment ${fmt(r.investment)} ${Q} → ~${fmt(r.annualProfit!)} ${Q}/year`);
     }
-    return { label: sc.label, annualDrift: sc.annualDrift, simulation: simResults, recommendations: recs };
-  });
-
-  // Save
-  const output = { asset: asset.name, quote: Q, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults };
-
-  const safeName = asset.name.replace('/', '_').toLowerCase();
-  fs.writeFileSync(path.join(__dirname, `output_${safeName}.json`), JSON.stringify(output, null, 2));
-  console.log(`\n  Saved → output_${safeName}.json`);
+  }
 }

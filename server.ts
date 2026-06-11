@@ -1,6 +1,7 @@
 import express from 'express';
 import path    from 'path';
 import fs      from 'fs';
+import multer  from 'multer';
 import { Config }                                        from './types';
 import { loadCandles }                                   from './loader';
 import { runBacktest, resolveGridParams }                from './engine';
@@ -13,6 +14,22 @@ const BASE_INVESTMENT = 100_000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, dataDir),
+  filename: (req, file, cb) => cb(null, (req.body?.targetFilename as string) || file.originalname),
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 500 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.originalname.toLowerCase().endsWith('.json')) cb(null, true);
+    else cb(new Error('Only .json files are allowed'));
+  },
+});
 
 app.get('/api/config', (_req, res) => {
   res.json(JSON.parse(fs.readFileSync(cfgPath, 'utf8')));
@@ -62,8 +79,6 @@ app.post('/api/run', async (req, res) => {
 
     const quote  = assetName.split('/')[1] ?? 'THB';
     const output = { asset: assetName, quote, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults };
-    const safeName = assetName.replace('/', '_').toLowerCase();
-    fs.writeFileSync(path.join(__dirname, `output_${safeName}.json`), JSON.stringify(output, null, 2));
     res.json(output);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -75,6 +90,57 @@ app.get('/api/output/:asset', (req, res) => {
   res.json(fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null);
 });
 
-app.listen(PORT, () => {
+app.get('/api/files', (_req, res) => {
+  const files = fs.existsSync(dataDir)
+    ? fs.readdirSync(dataDir)
+        .filter(f => f.endsWith('.json'))
+        .map(name => {
+          const stat = fs.statSync(path.join(dataDir, name));
+          return { name, size: stat.size, mtime: stat.mtime.toISOString() };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : [];
+  res.json(files);
+});
+
+app.post('/api/files/upload', (req, res) => {
+  upload.single('file')(req as any, res as any, (err: any) => {
+    if (err) { res.status(400).json({ error: err.message }); return; }
+    if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
+    try {
+      const { filename, size } = req.file;
+      const assetName = (req.body?.assetName as string | undefined)?.trim();
+      if (assetName) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as Config;
+        const dataFile = `./data/${filename}`;
+        if (!cfg.assets.find(a => a.name === assetName)) {
+          cfg.assets.push({ name: assetName, dataFile });
+          fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+        }
+      }
+      res.json({ name: filename, size });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+});
+
+app.delete('/api/files/:filename', (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(dataDir, filename);
+    if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'File not found' }); return; }
+    fs.unlinkSync(filePath);
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as Config;
+    cfg.assets = cfg.assets.filter(a => a.dataFile !== `./data/${filename}`);
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const server = app.listen(PORT, () => {
   console.log(`\n  Grid Trading Dashboard → http://localhost:${PORT}\n`);
 });
+server.timeout = 10 * 60 * 1000;

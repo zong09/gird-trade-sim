@@ -70,12 +70,3 @@ npx ts-node run.ts BTC/THB  # single asset
 ## Config
 
 Edit `config.json` to change fee rate, backtest period, grid width, simulation parameters, and scenarios.
-
-## Deploy
-
-```bash
-# Railway
-railway up
-```
-
-Ensure `data/` files are available on the server — they are excluded from the repo due to size.

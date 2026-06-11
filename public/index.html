@@ -87,6 +87,21 @@
   .spinner { display: inline-block; width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .error-box { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 12px 16px; border-radius: 8px; }
+
+  .tab-nav { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 0 28px; display: flex; }
+  .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 500; color: #64748b; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s; }
+  .tab-btn:hover { color: #1e293b; }
+  .tab-btn.tab-active { color: #3b82f6; border-bottom-color: #3b82f6; font-weight: 600; }
+  .layout.files-view { grid-template-columns: 1fr; }
+  .layout.files-view .sidebar { display: none; }
+  .file-row td { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  .file-row:last-child td { border-bottom: none; }
+  .btn-replace { padding: 4px 12px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 5px; font-size: 12px; font-weight: 500; color: #334155; cursor: pointer; margin-right: 6px; }
+  .btn-replace:hover { background: #e2e8f0; }
+  .btn-delete { padding: 4px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 5px; font-size: 12px; font-weight: 500; color: #dc2626; cursor: pointer; }
+  .btn-delete:hover { background: #fee2e2; }
+  .progress-bar-track { background: #f1f5f9; border-radius: 4px; height: 8px; overflow: hidden; margin: 8px 0; }
+  .progress-bar-fill { background: #3b82f6; height: 100%; width: 0; transition: width .1s; }
 </style>
 </head>
 <body>
@@ -96,7 +111,12 @@
   <span id="ts"></span>
 </header>
 
-<div class="layout">
+<nav class="tab-nav">
+  <button class="tab-btn tab-active" id="tabDashboard" onclick="switchTab('dashboard')">Dashboard</button>
+  <button class="tab-btn" id="tabFiles" onclick="switchTab('files')">Data Files</button>
+</nav>
+
+<div class="layout" id="layout">
   <div class="sidebar">
     <h2>Config</h2>
     <div class="field">
@@ -137,6 +157,198 @@
 
 <script>
 let charts = {};
+let currentTab = 'dashboard';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabDashboard').className = 'tab-btn' + (tab === 'dashboard' ? ' tab-active' : '');
+  document.getElementById('tabFiles').className     = 'tab-btn' + (tab === 'files'     ? ' tab-active' : '');
+  const layout = document.getElementById('layout');
+  if (tab === 'files') {
+    layout.classList.add('files-view');
+    renderFilesPage();
+  } else {
+    layout.classList.remove('files-view');
+    if (_dashData) renderDashboard(_dashData);
+    else document.getElementById('main').innerHTML = '<div class="status"><p>Press Run to start backtest and simulation</p></div>';
+  }
+}
+
+function fmtSize(b) {
+  if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+async function renderFilesPage() {
+  const main = document.getElementById('main');
+  main.innerHTML = '<div class="status"><div class="spinner"></div></div>';
+  let files;
+  try { files = await fetch('/api/files').then(r => r.json()); }
+  catch(e) { main.innerHTML = `<div class="error-box">Failed to load files: ${e.message}</div>`; return; }
+
+  main.innerHTML = `
+    <div style="max-width:860px;margin:0 auto;padding:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <h2 style="font-size:16px;font-weight:700;color:#0f172a">Data Files</h2>
+        <span style="font-size:12px;color:#94a3b8">${files.length} file(s) in data/</span>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <h3>Current Files</h3>
+        <table style="width:100%">
+          <thead><tr><th>Filename</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="filesTableBody"></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3>Add New Asset</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="field" style="margin:0">
+            <label>Asset Name <small style="color:#94a3b8">(e.g. BTC/THB)</small></label>
+            <input type="text" id="newAssetName" placeholder="BTC/THB">
+          </div>
+          <div class="field" style="margin:0">
+            <label>File <small style="color:#94a3b8">(.json, max 400 MB)</small></label>
+            <input type="file" id="newAssetFile" accept=".json">
+          </div>
+        </div>
+        <button onclick="doAddAsset()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Upload</button>
+      </div>
+      <div id="uploadProgress" style="display:none" class="card">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b">
+          <span id="uploadLabel"></span><span id="uploadPct"></span>
+        </div>
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="uploadBar"></div></div>
+        <div id="uploadStatus" style="font-size:12px;color:#64748b;margin-top:4px"></div>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('filesTableBody');
+  if (files.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:24px">No .json files found in data/</td></tr>';
+    return;
+  }
+  files.forEach(f => {
+    const tr = document.createElement('tr');
+    tr.className = 'file-row';
+    const mtime = new Date(f.mtime).toLocaleDateString('en-GB', { year:'numeric', month:'short', day:'numeric' });
+    const tdName = document.createElement('td');
+    tdName.style.fontFamily = 'monospace'; tdName.style.fontSize = '12px';
+    tdName.textContent = f.name;
+    const tdSize = document.createElement('td');
+    tdSize.textContent = fmtSize(f.size);
+    const tdDate = document.createElement('td');
+    tdDate.style.color = '#94a3b8'; tdDate.textContent = mtime;
+    const tdActions = document.createElement('td');
+    tdActions.style.textAlign = 'right';
+
+    const replaceLabel = document.createElement('label');
+    replaceLabel.className = 'btn-replace';
+    replaceLabel.textContent = 'Replace';
+    const replaceInput = document.createElement('input');
+    replaceInput.type = 'file'; replaceInput.accept = '.json'; replaceInput.style.display = 'none';
+    replaceInput.onchange = () => doReplace(f.name, replaceInput);
+    replaceLabel.appendChild(replaceInput);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-delete'; deleteBtn.textContent = 'Delete';
+    deleteBtn.onclick = () => doDelete(f.name);
+
+    tdActions.appendChild(replaceLabel); tdActions.appendChild(deleteBtn);
+    tr.appendChild(tdName); tr.appendChild(tdSize); tr.appendChild(tdDate); tr.appendChild(tdActions);
+    tbody.appendChild(tr);
+  });
+}
+
+function showProgress(label) {
+  const p = document.getElementById('uploadProgress');
+  if (!p) return;
+  p.style.display = 'block';
+  document.getElementById('uploadLabel').textContent = label;
+  document.getElementById('uploadPct').textContent = '0%';
+  document.getElementById('uploadBar').style.width = '0%';
+  document.getElementById('uploadBar').style.background = '#3b82f6';
+  document.getElementById('uploadStatus').textContent = '';
+}
+
+function updateProgress(loaded, total) {
+  const pct = total ? Math.round(loaded / total * 100) : 0;
+  document.getElementById('uploadPct').textContent = pct + '%';
+  document.getElementById('uploadBar').style.width = pct + '%';
+  document.getElementById('uploadStatus').textContent = fmtSize(loaded) + ' / ' + fmtSize(total);
+}
+
+function xhrUpload(fd) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = e => { if (e.lengthComputable) updateProgress(e.loaded, e.total); };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || xhr.statusText));
+      } catch(_) { reject(new Error(xhr.statusText)); }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.open('POST', '/api/files/upload');
+    xhr.send(fd);
+  });
+}
+
+async function doReplace(filename, input) {
+  if (!input.files[0]) return;
+  const file = input.files[0];
+  showProgress(`Replacing ${filename} with ${file.name}…`);
+  const fd = new FormData();
+  fd.append('targetFilename', filename);
+  fd.append('file', file);
+  try {
+    await xhrUpload(fd);
+    document.getElementById('uploadBar').style.background = '#10b981';
+    document.getElementById('uploadStatus').textContent = 'Upload complete!';
+    await loadConfig();
+  } catch(e) {
+    document.getElementById('uploadBar').style.background = '#ef4444';
+    document.getElementById('uploadStatus').textContent = 'Error: ' + e.message;
+  }
+  setTimeout(renderFilesPage, 1500);
+}
+
+async function doAddAsset() {
+  const assetName = (document.getElementById('newAssetName').value || '').trim();
+  const fileInput = document.getElementById('newAssetFile');
+  if (!assetName || !fileInput.files[0]) {
+    alert('Enter asset name and select a file');
+    return;
+  }
+  showProgress(`Uploading ${fileInput.files[0].name}…`);
+  const fd = new FormData();
+  fd.append('assetName', assetName);
+  fd.append('file', fileInput.files[0]);
+  try {
+    await xhrUpload(fd);
+    document.getElementById('uploadBar').style.background = '#10b981';
+    document.getElementById('uploadStatus').textContent = `Done — "${assetName}" added to config.`;
+    await loadConfig();
+  } catch(e) {
+    document.getElementById('uploadBar').style.background = '#ef4444';
+    document.getElementById('uploadStatus').textContent = 'Error: ' + e.message;
+  }
+  setTimeout(renderFilesPage, 1500);
+}
+
+async function doDelete(filename) {
+  if (!confirm(`Delete ${filename}?\nThis will also remove the asset from config if it references this file.`)) return;
+  try {
+    const r = await fetch(`/api/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'Delete failed');
+    await loadConfig();
+    renderFilesPage();
+  } catch(e) { alert('Error: ' + e.message); }
+}
 
 async function loadConfig() {
   const c   = await fetch('/api/config').then(r => r.json());
@@ -207,6 +419,11 @@ async function runAll() {
 }
 
 const fmt = n => Math.round(n).toLocaleString('en-US');
+const fmtPrice = n => {
+  if (n >= 1000) return Math.round(n).toLocaleString('en-US');
+  const d = n < 0.001 ? 6 : n < 1 ? 4 : 2;
+  return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+};
 
 let _dashData = null;
 
@@ -216,6 +433,7 @@ function renderDashboard(data) {
   const Q   = data.quote || 'THB';
   const maxP = Math.max(...bt.snapshots.map(s => s.price));
   const [pDiv, pSuffix] = maxP >= 1e6 ? [1e6, 'M'] : maxP >= 1e3 ? [1e3, 'K'] : [1, ''];
+  const priceDecimals = maxP >= 1e6 ? 1 : maxP >= 1000 ? 0 : maxP >= 1 ? 2 : 4;
 
   Object.values(charts).forEach(c => c.destroy());
   charts = {};
@@ -233,7 +451,7 @@ function renderDashboard(data) {
     <div class="kpi-row">
       <div class="kpi"><div class="label">Realized APY</div><div class="value green">${bt.apy}%</div><div class="sub">Profit ${fmt(bt.pnl)} ${Q}</div></div>
       <div class="kpi"><div class="label">Total APY (incl. Unrealized)</div><div class="value ${bt.totalApy >= 0 ? 'green' : 'red'}">${bt.totalApy}%</div><div class="sub">Unrealized ${bt.unrealized >= 0 ? '+' : ''}${fmt(bt.unrealized)} ${Q} · Total ${fmt(bt.totalPnl)} ${Q}</div></div>
-      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmt(bt.minPrice)} – ${fmt(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmt(bt.spacing)} ${Q} · first price ${fmt(bt.firstPrice)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmtPrice(bt.minPrice)} – ${fmtPrice(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmtPrice(bt.spacing)} ${Q} · first price ${fmtPrice(bt.firstPrice)} ${Q}</div></div>
     </div>
     <div class="kpi-row">
       <div class="kpi"><div class="label">Trading Volume</div><div class="value" style="font-size:18px">${fmt(bt.volume)} ${Q}</div><div class="sub">${(bt.volume / bt.investment).toFixed(1)}× capital turnover · ${fmt(bt.volume / (bt.trades / 2))} ${Q}/round trip avg</div></div>
@@ -328,12 +546,12 @@ function renderDashboard(data) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: c => c.datasetIndex < 2 ? ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(2)}%` : ` ${data.asset}: ${c.parsed.y.toFixed(2)}${pSuffix} ${Q}` } }
+        tooltip: { callbacks: { label: c => c.datasetIndex < 2 ? ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(2)}%` : ` ${data.asset}: ${c.parsed.y.toFixed(priceDecimals)}${pSuffix} ${Q}` } }
       },
       scales: {
         x: { ticks: { maxTicksLimit: 12, font: { size: 10 } }, grid: { color: '#f1f5f9' } },
         y: { position: 'left', grid: { color: '#f1f5f9' }, ticks: { callback: v => (v >= 0 ? '+' : '') + v + '%', font: { size: 11 } } },
-        y2: { position: 'right', grid: { display: false }, ticks: { callback: v => v.toFixed(pDiv >= 1e6 ? 1 : 0) + pSuffix, font: { size: 10 }, color: '#93c5fd' } },
+        y2: { position: 'right', grid: { display: false }, ticks: { callback: v => v.toFixed(priceDecimals) + pSuffix, font: { size: 10 }, color: '#93c5fd' } },
       }
     }
   });
@@ -445,7 +663,7 @@ function renderScenario(sc, Q) {
       <div class="rec-desc">${stratDesc[r.strategy]}</div>
       <hr class="rec-divider">
       <table class="rec-kv">
-        <tr><td>Min / Max</td><td>${fmt(r.minPrice)} – ${fmt(r.maxPrice)} ${Q}</td></tr>
+        <tr><td>Min / Max</td><td>${fmtPrice(r.minPrice)} – ${fmtPrice(r.maxPrice)} ${Q}</td></tr>
         <tr><td>No. of grids</td><td>${r.numGrids}</td></tr>
         <tr><td>P25 – P75</td><td>${r.p25}% – ${r.p75}%</td></tr>
         <tr><td>Prob ≥ ${tApy}%</td><td>${r.probAboveTarget}%</td></tr>

@@ -15,6 +15,10 @@
     {
       "name": "ETH/USDT",
       "dataFile": "./data/eth_usdt.json"
+    },
+    {
+      "name": "DOGE/USDT",
+      "dataFile": "./data/doge_usdt.json"
     }
   ],
   "feeRate": 0.0025,
