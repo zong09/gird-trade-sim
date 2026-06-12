@@ -1,11 +1,14 @@
 import fs   from 'fs';
 import path from 'path';
-import { Config }                                             from './types';
+import { Config, AssetConfig }                                from './types';
 import { loadCandles }                                        from './loader';
 import { runBacktest, resolveGridParams }                     from './engine';
 import { runMonteCarlo, getRecommendation, autoGenParamSets } from './simulator';
 
-const cfg             = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')) as Config;
+const assetCfgPath    = path.join(__dirname, 'data', 'asset-config.json');
+const baseCfg         = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const assets          = (JSON.parse(fs.readFileSync(assetCfgPath, 'utf8')) as AssetConfig).assets;
+const cfg             = { ...baseCfg, assets } as Config;
 const fmt             = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 const BASE_INVESTMENT = 100_000;
 

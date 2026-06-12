@@ -130,13 +130,26 @@
     <div class="field"><label>End</label><input type="date" id="bt-end"></div>
 
     <div class="section-title">Auto Grid Config</div>
-    <div class="field"><label>Width % (±X% from first price)</label><input type="number" id="widthPct" min="20" max="200" step="10"></div>
+    <div class="field"><label>±% from first price</label><input type="number" id="widthPct" min="10" max="200" step="5"></div>
     <div class="field"><label>No. of Grids <small style="color:#94a3b8">(blank = auto)</small></label><input type="number" id="numGrids" min="5" max="200" step="5" placeholder="auto"></div>
 
     <div class="section-title">Simulation</div>
     <div class="field"><label>Target APY (%)</label><input type="number" id="targetApy" step="1"></div>
     <div class="field"><label>No. of Simulations</label><input type="number" id="numSims" step="50"></div>
-    <div class="field"><label id="targetProfitLabel">Target Profit (/year)</label><input type="number" id="targetProfit" step="100"></div>
+    <div class="field">
+      <label id="capitalLabel">Capital</label>
+      <div style="display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;overflow:hidden">
+        <input type="number" id="capital" step="10000" min="1" style="flex:1;border:none;padding:6px 10px;font-size:13px;color:#1e293b;background:transparent;outline:none">
+        <span id="capitalCurrency" style="padding:0 10px;font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-left:1px solid #e2e8f0;height:100%;display:flex;align-items:center;white-space:nowrap">THB</span>
+      </div>
+    </div>
+    <div class="field">
+      <label id="targetProfitLabel">Target Profit / year <small style="color:#94a3b8">(optional)</small></label>
+      <div style="display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;overflow:hidden">
+        <input type="number" id="targetProfit" step="100" placeholder="for required capital calc" style="flex:1;border:none;padding:6px 10px;font-size:13px;color:#1e293b;background:transparent;outline:none">
+        <span id="targetProfitCurrency" style="padding:0 10px;font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-left:1px solid #e2e8f0;height:100%;display:flex;align-items:center;white-space:nowrap">THB</span>
+      </div>
+    </div>
     <div class="field">
       <label>Bull Drift (%/year) <small style="color:#94a3b8">(0 = off)</small></label>
       <input type="number" id="bullDrift" min="0" max="500" step="10">
@@ -192,12 +205,15 @@ async function renderFilesPage() {
     <div style="max-width:860px;margin:0 auto;padding:24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
         <h2 style="font-size:16px;font-weight:700;color:#0f172a">Data Files</h2>
-        <span style="font-size:12px;color:#94a3b8">${files.length} file(s) in data/</span>
+        <span style="font-size:12px;color:#94a3b8">${files.length} file(s) in data</span>
       </div>
       <div class="card" style="margin-bottom:20px">
-        <h3>Current Files</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <h3 style="margin:0">Current Files</h3>
+          <span style="font-size:11px;color:#94a3b8">Index controls dropdown order</span>
+        </div>
         <table style="width:100%">
-          <thead><tr><th>Filename</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead>
+          <thead><tr><th style="width:40px">Index</th><th>Filename</th><th>Asset Name</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th><th style="width:32px"></th></tr></thead>
           <tbody id="filesTableBody"></tbody>
         </table>
       </div>
@@ -225,18 +241,85 @@ async function renderFilesPage() {
     </div>
   `;
 
+  // sort by asset order (assets with known order first, then unregistered files)
+  let cfg;
+  try { cfg = await fetch('/api/config').then(r => r.json()); } catch(_) { cfg = null; }
+  let assetOrder = cfg ? cfg.assets.map(a => a.name) : [];
+
+  // Separate registered (ordered) vs unregistered files
+  const registered   = assetOrder.map(name => files.find(f => f.asset === name)).filter(Boolean);
+  const unregistered = files.filter(f => !f.asset || !assetOrder.includes(f.asset));
+  const orderedFiles = [...registered, ...unregistered];
+
   const tbody = document.getElementById('filesTableBody');
   if (files.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:24px">No .json files found in data/</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No .json files found in data/</td></tr>';
     return;
   }
-  files.forEach(f => {
+
+  // Drag-and-drop state
+  let dragSrcAsset = null;
+
+  async function saveOrder(newOrder) {
+    assetOrder = newOrder;
+    await fetch('/api/files/reorder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ names: newOrder }) });
+    await loadConfig();
+  }
+
+  orderedFiles.forEach((f, i) => {
     const tr = document.createElement('tr');
     tr.className = 'file-row';
     const mtime = new Date(f.mtime).toLocaleDateString('en-GB', { year:'numeric', month:'short', day:'numeric' });
+    const isRegistered = f.asset && assetOrder.includes(f.asset);
+    const orderIdx     = isRegistered ? assetOrder.indexOf(f.asset) : -1;
+
+    // Drag-and-drop (registered rows only)
+    if (isRegistered) {
+      tr.draggable = true;
+      tr.style.cursor = 'grab';
+      tr.addEventListener('dragstart', e => {
+        dragSrcAsset = f.asset;
+        tr.style.opacity = '0.4';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      tr.addEventListener('dragend', () => { tr.style.opacity = ''; tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = ''); });
+      tr.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = '');
+        tr.style.borderTop = '2px solid #3b82f6';
+      });
+      tr.addEventListener('dragleave', () => { tr.style.borderTop = ''; });
+      tr.addEventListener('drop', async e => {
+        e.preventDefault();
+        tr.style.borderTop = '';
+        if (!dragSrcAsset || dragSrcAsset === f.asset) return;
+        const newOrder = [...assetOrder];
+        const from = newOrder.indexOf(dragSrcAsset);
+        const to   = newOrder.indexOf(f.asset);
+        if (from < 0 || to < 0) return;
+        newOrder.splice(from, 1);
+        newOrder.splice(to, 0, dragSrcAsset);
+        await saveOrder(newOrder);
+        renderFilesPage();
+      });
+    }
+
+    // Index cell — just number + drag handle icon
+    const tdIdx = document.createElement('td');
+    tdIdx.style.cssText = 'text-align:center;padding:8px 4px;user-select:none';
+    if (isRegistered) {
+      tdIdx.innerHTML = `<span style="font-size:12px;font-weight:700;color:#1e293b">${orderIdx + 1}</span>`;
+    } else {
+      tdIdx.innerHTML = '<span style="color:#94a3b8;font-size:11px">—</span>';
+    }
+
     const tdName = document.createElement('td');
     tdName.style.fontFamily = 'monospace'; tdName.style.fontSize = '12px';
     tdName.textContent = f.name;
+    const tdAsset = document.createElement('td');
+    if (f.asset) { tdAsset.textContent = f.asset; tdAsset.style.fontWeight = '600'; }
+    else { tdAsset.textContent = '—'; tdAsset.style.color = '#94a3b8'; }
     const tdSize = document.createElement('td');
     tdSize.textContent = fmtSize(f.size);
     const tdDate = document.createElement('td');
@@ -257,9 +340,34 @@ async function renderFilesPage() {
     deleteBtn.onclick = () => doDelete(f.name);
 
     tdActions.appendChild(replaceLabel); tdActions.appendChild(deleteBtn);
-    tr.appendChild(tdName); tr.appendChild(tdSize); tr.appendChild(tdDate); tr.appendChild(tdActions);
+    const tdHandle = document.createElement('td');
+    tdHandle.style.cssText = 'text-align:center;color:#cbd5e1;font-size:16px;user-select:none';
+    tdHandle.textContent = isRegistered ? '⠿' : '';
+    tr.appendChild(tdIdx); tr.appendChild(tdName); tr.appendChild(tdAsset); tr.appendChild(tdSize); tr.appendChild(tdDate); tr.appendChild(tdActions); tr.appendChild(tdHandle);
     tbody.appendChild(tr);
   });
+}
+
+function showPopup(title, message, isError) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);display:flex;align-items:center;justify-content:center;z-index:1000';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff;border-radius:12px;padding:24px 28px;max-width:420px;width:90%;box-shadow:0 20px 50px rgba(0,0,0,0.25);text-align:center';
+  const h = document.createElement('div');
+  h.style.cssText = `font-size:15px;font-weight:700;margin-bottom:8px;color:${isError ? '#ef4444' : '#10b981'}`;
+  h.textContent = (isError ? '✕ ' : '✓ ') + title;
+  const msg = document.createElement('div');
+  msg.style.cssText = 'font-size:13px;color:#475569;margin-bottom:16px;word-break:break-word';
+  msg.textContent = message;
+  const btn = document.createElement('button');
+  btn.style.cssText = 'padding:8px 28px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer';
+  btn.textContent = 'OK';
+  btn.onclick = () => overlay.remove();
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  card.appendChild(h); card.appendChild(msg); card.appendChild(btn);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  btn.focus();
 }
 
 function showProgress(label) {
@@ -309,9 +417,11 @@ async function doReplace(filename, input) {
     document.getElementById('uploadBar').style.background = '#10b981';
     document.getElementById('uploadStatus').textContent = 'Upload complete!';
     await loadConfig();
+    showPopup('Upload Complete', `Replaced ${filename} successfully.`, false);
   } catch(e) {
     document.getElementById('uploadBar').style.background = '#ef4444';
     document.getElementById('uploadStatus').textContent = 'Error: ' + e.message;
+    showPopup('Upload Failed', e.message, true);
   }
   setTimeout(renderFilesPage, 1500);
 }
@@ -332,9 +442,11 @@ async function doAddAsset() {
     document.getElementById('uploadBar').style.background = '#10b981';
     document.getElementById('uploadStatus').textContent = `Done — "${assetName}" added to config.`;
     await loadConfig();
+    showPopup('Upload Complete', `"${assetName}" uploaded and added to config.`, false);
   } catch(e) {
     document.getElementById('uploadBar').style.background = '#ef4444';
     document.getElementById('uploadStatus').textContent = 'Error: ' + e.message;
+    showPopup('Upload Failed', e.message, true);
   }
   setTimeout(renderFilesPage, 1500);
 }
@@ -352,13 +464,17 @@ async function doDelete(filename) {
 
 async function loadConfig() {
   const c   = await fetch('/api/config').then(r => r.json());
+  if (c.version) document.getElementById('appVersion').textContent = c.version;
   const sel = document.getElementById('asset');
   sel.innerHTML = c.assets.map(a => `<option value="${a.name}">${a.name}</option>`).join('');
   const updateAssetUI = () => {
     const picked = c.assets.find(a => a.name === sel.value);
     if (!picked) return;
     const quote = picked.name.split('/')[1] ?? 'THB';
-    document.getElementById('targetProfitLabel').textContent = `Target Profit (${quote}/year)`;
+    document.getElementById('targetProfitLabel').innerHTML = `Target Profit / year <small style="color:#94a3b8">(optional)</small>`;
+    document.getElementById('capitalLabel').textContent = `Capital`;
+    document.getElementById('capitalCurrency').textContent = quote;
+    document.getElementById('targetProfitCurrency').textContent = quote;
     document.getElementById('dashTitle').textContent = `Grid Trading Simulation — ${picked.name}`;
   };
   sel.onchange = updateAssetUI;
@@ -366,10 +482,11 @@ async function loadConfig() {
   document.getElementById('feeRate').value = (c.feeRate * 100).toFixed(2);
   document.getElementById('bt-start').value     = c.backtest.period.start ?? '';
   document.getElementById('bt-end').value       = c.backtest.period.end   ?? '';
-  document.getElementById('widthPct').value     = c.backtest.auto?.widthPct ?? 100;
+  document.getElementById('widthPct').value     = (c.backtest.auto?.widthPct ?? 100) / 2;
   document.getElementById('numGrids').value     = c.backtest.auto?.numGrids ?? '';
   document.getElementById('targetApy').value    = c.simulation.targetApy;
   document.getElementById('numSims').value      = c.simulation.numSims;
+  document.getElementById('capital').value      = c.simulation.investment ?? 100000;
   document.getElementById('targetProfit').value = c.simulation.targetProfit ?? '';
   const bullScenario = (c.simulation.scenarios ?? []).find(s => s.annualDrift > 0);
   document.getElementById('bullDrift').value = bullScenario ? bullScenario.annualDrift : 0;
@@ -380,13 +497,14 @@ function buildConfig(base) {
   base.backtest.period.start = document.getElementById('bt-start').value;
   base.backtest.period.end   = document.getElementById('bt-end').value;
   if (base.backtest.auto) {
-    base.backtest.auto.widthPct  = +document.getElementById('widthPct').value;
+    base.backtest.auto.widthPct  = +document.getElementById('widthPct').value * 2;
     const ng = document.getElementById('numGrids').value;
     if (ng) base.backtest.auto.numGrids = +ng;
     else    delete base.backtest.auto.numGrids;
   }
   base.simulation.targetApy    = +document.getElementById('targetApy').value;
   base.simulation.numSims      = +document.getElementById('numSims').value;
+  base.simulation.investment   = +document.getElementById('capital').value || 100000;
   base.simulation.targetProfit = +document.getElementById('targetProfit').value || null;
   const drift = +document.getElementById('bullDrift').value;
   if (drift > 0) {
@@ -406,9 +524,8 @@ async function runAll() {
   document.getElementById('main').innerHTML = '<div class="status"><div class="spinner"></div><p style="margin-top:16px">Running backtest + simulation…</p></div>';
   try {
     const base = await fetch('/api/config').then(r => r.json());
-    await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(buildConfig(base)) });
     const asset = document.getElementById('asset').value;
-    const data  = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ asset }) }).then(r => r.json());
+    const data  = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ asset, config: buildConfig(base) }) }).then(r => r.json());
     if (data.error) throw new Error(data.error);
     renderDashboard(data);
     document.getElementById('ts').textContent = new Date().toLocaleTimeString('en-GB');
@@ -439,7 +556,7 @@ function renderDashboard(data) {
   charts = {};
 
   const autoNote = data.autoGridParams
-    ? ` <small style="color:#3b82f6">(auto ±${document.getElementById('widthPct').value / 2}%)</small>` : '';
+    ? ` <small style="color:#3b82f6">(auto ±${document.getElementById('widthPct').value}%)</small>` : '';
   document.getElementById('dashTitle').textContent = `Grid Trading Simulation — ${data.asset}`;
 
   document.getElementById('main').innerHTML = `
@@ -473,20 +590,27 @@ function renderDashboard(data) {
     <!-- Simulation Section -->
     <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
       <span style="background:#1e40af;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Monte Carlo Simulation</span>
-      <span style="font-size:12px;color:#94a3b8">${document.getElementById('numSims').value} simulations · 1-year forward projection</span>
+      <span style="font-size:12px;color:#94a3b8">${document.getElementById('numSims').value} simulations · 1-year forward projection · capital ${fmt(+document.getElementById('capital').value || 100000)} ${Q}</span>
     </div>
 
     <!-- Scenario Tabs -->
-    <div id="scenarioTabs" style="display:flex;gap:6px;margin-bottom:14px"></div>
+    <div id="scenarioTabs" style="display:flex;gap:6px;margin-bottom:8px"></div>
+    <div id="simRefInfo" style="display:none;align-items:center;gap:6px;font-size:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 14px;margin-bottom:14px;flex-wrap:wrap"></div>
 
     <!-- Chart 2: Sim table + Chart 3: Confidence bands -->
     <div class="row2" style="margin-bottom:16px">
       <div class="card" style="margin-bottom:0">
         <h3>Simulation Results</h3>
         <table>
-          <thead><tr><th>Config</th><th>P10</th><th>P25</th><th>Med</th><th>P75</th><th>P90</th><th>P(≥${document.getElementById('targetApy').value}%)</th></tr></thead>
+          <thead>
+            <tr><th>Config</th><th>Type</th><th>P10</th><th>P25</th><th>Med</th><th>P75</th><th>P90</th><th>P(≥${document.getElementById('targetApy').value}%)</th></tr>
+          </thead>
           <tbody id="simTable"></tbody>
         </table>
+        <div style="margin-top:8px;font-size:11px;color:#94a3b8">
+          <b>Realized</b> = completed round trips only &nbsp;·&nbsp;
+          <b>Total</b> = realized + unrealized (mark-to-market at year end)
+        </div>
       </div>
       <div class="card" style="margin-bottom:0">
         <h3>APY Confidence Bands (P10 → P90)</h3>
@@ -567,14 +691,14 @@ function renderDashboard(data) {
         b.style.background = '#f8fafc'; b.style.color = '#475569'; b.style.borderColor = '#e2e8f0';
       });
       btn.style.background = '#1e40af'; btn.style.color = '#fff'; btn.style.borderColor = '#1e40af';
-      renderScenario(data.scenarios[i], data.quote || 'THB');
+      renderScenario(data.scenarios[i], data.quote || 'THB', data.refPrice, data.investment);
     };
     if (i === 0) { btn.style.background = '#1e40af'; btn.style.color = '#fff'; btn.style.borderColor = '#1e40af'; }
     else { btn.style.background = '#f8fafc'; btn.style.color = '#475569'; }
     tabsEl.appendChild(btn);
   });
 
-  renderScenario(data.scenarios[0], Q);
+  renderScenario(data.scenarios[0], Q, data.refPrice, data.investment);
 }
 
 const pillLabel = {
@@ -595,12 +719,37 @@ const p10Display = p10 => {
   return `<span style="color:#dc2626">${p10}% <small>(negative)</small></span>`;
 };
 
-function renderScenario(sc, Q) {
+function renderScenario(sc, Q, refPrice, investment) {
   const sim  = sc.simulation;
   const recs = sc.recommendations;
   const tApy = document.getElementById('targetApy').value;
 
   ['bands','prob'].forEach(k => { if (charts[k]) { charts[k].destroy(); delete charts[k]; } });
+
+  // ── Ref price info bar ────────────────────────────────────────────────
+  const infoBarEl = document.getElementById('simRefInfo');
+  if (infoBarEl) {
+    if (sc.annualDrift > 0 && refPrice) {
+      const center = refPrice * Math.sqrt(1 + sc.annualDrift / 100);
+      const shiftPct = ((center / refPrice - 1) * 100).toFixed(1);
+      infoBarEl.innerHTML = `
+        <span style="color:#64748b">Simulation start price:</span>
+        <b>${fmtPrice(refPrice)} ${Q}</b>
+        <span style="color:#94a3b8;margin:0 6px">→</span>
+        <span style="color:#64748b">Bull grid center (×√${(1 + sc.annualDrift/100).toFixed(2)}):</span>
+        <b style="color:#1e40af">${fmtPrice(center)} ${Q}</b>
+        <span style="color:#94a3b8;font-size:11px">(+${shiftPct}% shift)</span>`;
+      infoBarEl.style.display = 'flex';
+    } else if (refPrice) {
+      infoBarEl.innerHTML = `
+        <span style="color:#64748b">Simulation start price:</span>
+        <b>${fmtPrice(refPrice)} ${Q}</b>
+        <span style="color:#94a3b8;font-size:11px;margin-left:6px">(Base — no drift, grid centered at current price)</span>`;
+      infoBarEl.style.display = 'flex';
+    } else {
+      infoBarEl.style.display = 'none';
+    }
+  }
 
   // ── Sim table ──────────────────────────────────────────────────────────
   const recMap = {};
@@ -608,11 +757,28 @@ function renderScenario(sc, Q) {
   const tbody = document.getElementById('simTable');
   tbody.innerHTML = '';
   sim.forEach(r => {
-    const tr = document.createElement('tr');
     const badges = (recMap[r.label] || []).map(s => `<span class="badge badge-${s}">${s}</span>`).join('');
-    tr.innerHTML = `<td>${r.label}${badges}</td><td>${r.p10}%</td><td>${r.p25}%</td><td><b>${r.median}%</b></td><td>${r.p75}%</td><td>${r.p90}%</td><td>${r.probAboveTarget}%</td>`;
-    if (recMap[r.label]) tr.style.background = '#f8fafc';
-    tbody.appendChild(tr);
+    const bg = recMap[r.label] ? 'background:#f8fafc' : '';
+
+    // Realized row
+    const trR = document.createElement('tr');
+    trR.style.cssText = bg;
+    trR.innerHTML = `<td rowspan="2" style="vertical-align:middle;font-weight:600">${r.label}${badges}</td>
+      <td style="color:#64748b;font-size:11px;white-space:nowrap">Realized</td>
+      <td>${r.p10}%</td><td>${r.p25}%</td><td><b>${r.median}%</b></td><td>${r.p75}%</td><td>${r.p90}%</td>
+      <td>${r.probAboveTarget}%</td>`;
+
+    // Total row
+    const trT = document.createElement('tr');
+    trT.style.cssText = (bg || '') + ';border-bottom:2px solid #e2e8f0';
+    trT.innerHTML = `<td style="color:#1e40af;font-size:11px;white-space:nowrap;font-weight:600">Total (incl. Unrealized)</td>
+      <td style="color:#1e40af">${r.totalP10}%</td><td style="color:#1e40af">${r.totalP25}%</td>
+      <td style="color:#1e40af"><b>${r.totalMedian}%</b></td>
+      <td style="color:#1e40af">${r.totalP75}%</td><td style="color:#1e40af">${r.totalP90}%</td>
+      <td style="color:#94a3b8">—</td>`;
+
+    tbody.appendChild(trR);
+    tbody.appendChild(trT);
   });
 
   // ── Chart 3: Confidence bands ──────────────────────────────────────────
@@ -623,7 +789,8 @@ function renderScenario(sc, Q) {
       labels: sim.map(r => r.label),
       datasets: [
         { label: 'P10–P90 range', data: sim.map(r => [r.p10, r.p90]), backgroundColor: colors, borderColor: colors.map(c => c.replace(/[\d.]+\)$/, '1)')), borderWidth: 1, borderRadius: 4 },
-        { label: 'Median', data: sim.map(r => r.median), type: 'line', borderColor: '#f59e0b', borderWidth: 2, pointBackgroundColor: '#f59e0b', pointRadius: 5, pointHoverRadius: 7, tension: 0, fill: false, yAxisID: 'y' },
+        { label: 'Median (Realized)', data: sim.map(r => r.median), type: 'line', borderColor: '#f59e0b', borderWidth: 2, pointBackgroundColor: '#f59e0b', pointRadius: 5, pointHoverRadius: 7, tension: 0, fill: false, yAxisID: 'y' },
+        { label: 'Median (Total)', data: sim.map(r => r.totalMedian), type: 'line', borderColor: '#1e40af', borderWidth: 2, borderDash: [4,3], pointBackgroundColor: '#1e40af', pointRadius: 4, pointHoverRadius: 6, tension: 0, fill: false, yAxisID: 'y' },
       ]
     },
     options: {
@@ -659,18 +826,25 @@ function renderScenario(sc, Q) {
       <div class="rec-pill">${pillLabel[r.strategy]}</div>
       <div class="rec-subtitle">${wLabel} · ${r.numGrids} grids</div>
       <div class="rec-apy">${r.expectedApy}%</div>
-      <div class="rec-apy-label">Median APY</div>
+      <div class="rec-apy-label">Median APY (Realized)</div>
+      <div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:2px">${r.totalExpectedApy}%</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">Median APY (Total incl. Unrealized)</div>
       <div class="rec-desc">${stratDesc[r.strategy]}</div>
       <hr class="rec-divider">
       <table class="rec-kv">
         <tr><td>Min / Max</td><td>${fmtPrice(r.minPrice)} – ${fmtPrice(r.maxPrice)} ${Q}</td></tr>
         <tr><td>No. of grids</td><td>${r.numGrids}</td></tr>
-        <tr><td>P25 – P75</td><td>${r.p25}% – ${r.p75}%</td></tr>
+        <tr><td>P25 – P75 (Realized)</td><td>${r.p25}% – ${r.p75}%</td></tr>
+        <tr><td style="color:#1e40af">P25 – P75 (Total)</td><td style="color:#1e40af">${r.totalP25}% – ${r.totalP75}%</td></tr>
         <tr><td>Prob ≥ ${tApy}%</td><td>${r.probAboveTarget}%</td></tr>
         <tr><td>Profit/round trip</td><td>${r.profitPerRoundTrip}%</td></tr>
         <tr><td>Trades/year (avg)</td><td>${r.avgTradesPerYear.toLocaleString()}</td></tr>
-        <tr><td>Worst case (P10)</td><td>${p10Display(r.p10)}</td></tr>
-        ${r.investment ? `<tr><td>Required capital</td><td>${fmt(r.investment)} ${Q}</td></tr><tr><td>Est. annual profit</td><td>~${fmt(r.annualProfit)} ${Q}</td></tr>` : ''}
+        <tr><td>Worst case P10 (Realized)</td><td>${p10Display(r.p10)}</td></tr>
+        <tr><td style="color:#1e40af">Worst case P10 (Total)</td><td>${p10Display(r.totalP10)}</td></tr>
+        ${investment ? `<tr><td>Capital</td><td><b>${fmt(investment)} ${Q}</b></td></tr>
+        <tr><td>Est. profit (Realized APY)</td><td><b>~${fmt(Math.round(investment * r.expectedApy / 100))} ${Q}</b></td></tr>
+        <tr><td style="color:#1e40af">Est. profit (Total APY)</td><td style="color:#1e40af"><b>~${fmt(Math.round(investment * r.totalExpectedApy / 100))} ${Q}</b></td></tr>` : ''}
+        ${r.investment ? `<tr><td style="color:#94a3b8;font-size:11px">Capital for target profit</td><td style="color:#94a3b8;font-size:11px">${fmt(r.investment)} ${Q}</td></tr>` : ''}
       </table>`;
     recGrid.appendChild(card);
   });
@@ -678,5 +852,8 @@ function renderScenario(sc, Q) {
 
 loadConfig();
 </script>
+<footer style="text-align:center;padding:12px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;background:#fff">
+  Grid Trading Simulation &nbsp;·&nbsp; v<span id="appVersion">—</span>
+</footer>
 </body>
 </html>

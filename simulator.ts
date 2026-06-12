@@ -124,10 +124,11 @@ export function runMonteCarlo({
         ts: i * 3600, open: prices[i], high: p * hi[i], low: p * lo[i], close: p,
       }));
       const r = runBacktest(c, { ...ps, investment, feeRate });
-      return { apy: r.apy, trades: r.trades };
+      return { apy: r.apy, totalApy: r.totalApy, trades: r.trades };
     });
-    const apys   = results.map(r => r.apy).sort((a, b) => a - b);
-    const trades = results.map(r => r.trades);
+    const apys      = results.map(r => r.apy).sort((a, b) => a - b);
+    const totalApys = results.map(r => r.totalApy).sort((a, b) => a - b);
+    const trades    = results.map(r => r.trades);
     const avgTrades = +(trades.reduce((s, v) => s + v, 0) / trades.length).toFixed(0);
 
     const spacing = (ps.maxPrice - ps.minPrice) / ps.numGrids;
@@ -143,6 +144,11 @@ export function runMonteCarlo({
       p25:               +percentile(apys, 25).toFixed(2),
       p75:               +percentile(apys, 75).toFixed(2),
       p90:               +percentile(apys, 90).toFixed(2),
+      totalMedian:       +percentile(totalApys, 50).toFixed(2),
+      totalP10:          +percentile(totalApys, 10).toFixed(2),
+      totalP25:          +percentile(totalApys, 25).toFixed(2),
+      totalP75:          +percentile(totalApys, 75).toFixed(2),
+      totalP90:          +percentile(totalApys, 90).toFixed(2),
       probAboveTarget:   +(apys.filter(v => v >= 8).length / apys.length * 100).toFixed(1),
       probPositive:      +(apys.filter(v => v >  0).length / apys.length * 100).toFixed(1),
       avgTradesPerYear:  avgTrades,
@@ -181,6 +187,11 @@ export function getRecommendation(
     p25:                best.p25,
     p75:                best.p75,
     p90:                best.p90,
+    totalExpectedApy:   best.totalMedian,
+    totalP10:           best.totalP10,
+    totalP25:           best.totalP25,
+    totalP75:           best.totalP75,
+    totalP90:           best.totalP90,
     probAboveTarget:    best.probAboveTarget,
     gridSpacing:        +spacing.toFixed(0),
     gridSpacingPct:     +(spacing / mid * 100).toFixed(2),

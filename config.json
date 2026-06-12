@@ -1,26 +1,4 @@
 {
-  "assets": [
-    {
-      "name": "BTC/THB",
-      "dataFile": "./data/btc_thb.json"
-    },
-    {
-      "name": "ETH/THB",
-      "dataFile": "./data/eth_thb.json"
-    },
-    {
-      "name": "BTC/USDT",
-      "dataFile": "./data/btc_usdt.json"
-    },
-    {
-      "name": "ETH/USDT",
-      "dataFile": "./data/eth_usdt.json"
-    },
-    {
-      "name": "DOGE/USDT",
-      "dataFile": "./data/doge_usdt.json"
-    }
-  ],
   "feeRate": 0.0025,
   "backtest": {
     "period": {

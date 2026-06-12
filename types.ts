@@ -55,6 +55,11 @@ export interface SimResult {
   p25: number;
   p75: number;
   p90: number;
+  totalMedian: number;
+  totalP10: number;
+  totalP25: number;
+  totalP75: number;
+  totalP90: number;
   probAboveTarget: number;
   probPositive: number;
   avgTradesPerYear: number;
@@ -72,6 +77,11 @@ export interface Recommendation {
   p25: number;
   p75: number;
   p90: number;
+  totalExpectedApy: number;
+  totalP10: number;
+  totalP25: number;
+  totalP75: number;
+  totalP90: number;
   probAboveTarget: number;
   gridSpacing: number;
   gridSpacingPct: number;
@@ -91,6 +101,10 @@ export interface AutoGridConfig {
 export interface Asset {
   name: string;       // full pair e.g. "BTC/THB", "BTC/USDT"
   dataFile: string;
+}
+
+export interface AssetConfig {
+  assets: Asset[];
 }
 
 export interface AutoParamSets {
@@ -118,6 +132,7 @@ export interface Config {
     trainingPeriod?: { start?: string; end?: string };
     targetApy: number;
     targetProfit?: number;
+    investment?: number;
     numSims: number;
     hoursAhead: number;
     blockSize: number;
