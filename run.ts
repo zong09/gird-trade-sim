@@ -1,11 +1,14 @@
 import fs   from 'fs';
 import path from 'path';
-import { Config }                                             from './types';
+import { Config, AssetConfig }                                from './types';
 import { loadCandles }                                        from './loader';
 import { runBacktest, resolveGridParams }                     from './engine';
 import { runMonteCarlo, getRecommendation, autoGenParamSets } from './simulator';
 
-const cfg             = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')) as Config;
+const assetCfgPath    = path.join(__dirname, 'data', 'asset-config.json');
+const baseCfg         = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const assets          = (JSON.parse(fs.readFileSync(assetCfgPath, 'utf8')) as AssetConfig).assets;
+const cfg             = { ...baseCfg, assets } as Config;
 const fmt             = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 const BASE_INVESTMENT = 100_000;
 
@@ -51,7 +54,7 @@ for (const asset of assetsToRun) {
   const scenarios = sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }];
   const opts      = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
 
-  const scenarioResults = scenarios.map(sc => {
+  for (const sc of scenarios) {
     const paramSets = autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift);
     console.log(`\n── Monte Carlo [${sc.label}]  drift=${sc.annualDrift}%  sims=${sim.numSims}  paramSets=${paramSets.length}`);
     const simResults = runMonteCarlo({
@@ -85,13 +88,5 @@ for (const asset of assetsToRun) {
       console.log(`  [${r.strategy.toUpperCase()}]  ${r.label}  APY ${r.expectedApy}%  P10 ${r.p10}%  P(≥${sim.targetApy}%) ${r.probAboveTarget}%`);
       if (r.investment) console.log(`           investment ${fmt(r.investment)} ${Q} → ~${fmt(r.annualProfit!)} ${Q}/year`);
     }
-    return { label: sc.label, annualDrift: sc.annualDrift, simulation: simResults, recommendations: recs };
-  });
-
-  // Save
-  const output = { asset: asset.name, quote: Q, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults };
-
-  const safeName = asset.name.replace('/', '_').toLowerCase();
-  fs.writeFileSync(path.join(__dirname, `output_${safeName}.json`), JSON.stringify(output, null, 2));
-  console.log(`\n  Saved → output_${safeName}.json`);
+  }
 }
