@@ -3,7 +3,7 @@ import path    from 'path';
 import fs      from 'fs';
 import multer  from 'multer';
 import { Config, AssetConfig, Asset }                    from './types';
-import { loadCandles, parseCandleData }                  from './loader';
+import { loadCandles, parseCandleData, validateCandles } from './loader';
 import { listSymbols, insertCandles, deleteSymbol }      from './db';
 import { searchSymbols, syncKlines }                     from './binance';
 import { runBacktest, resolveGridParams }                from './engine';
@@ -135,8 +135,12 @@ app.post('/api/files/upload', (req, res) => {
     try {
       const assetName = (req.body?.assetName as string | undefined)?.trim();
       if (!assetName) { res.status(400).json({ error: 'assetName is required' }); return; }
-      const candles = parseCandleData(JSON.parse(req.file.buffer.toString('utf8')));
-      if (!candles.length) { res.status(400).json({ error: 'No candles parsed from file' }); return; }
+      let raw: any;
+      try { raw = JSON.parse(req.file.buffer.toString('utf8')); }
+      catch { res.status(400).json({ error: 'File is not valid JSON' }); return; }
+      const candles = parseCandleData(raw);
+      const invalid = validateCandles(candles);
+      if (invalid) { res.status(400).json({ error: invalid }); return; }
       const rows = insertCandles(assetName, candles);
       const assetCfg = ensureAssetConfig();
       if (!assetCfg.assets.find(a => a.name === assetName)) {

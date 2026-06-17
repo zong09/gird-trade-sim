@@ -42,6 +42,21 @@ export function parseCandleData(raw: any): Candle[] {
   return candles;
 }
 
+// Validate parsed candles before importing. Returns an error message, or null if valid.
+export function validateCandles(candles: Candle[]): string | null {
+  if (!candles.length) return 'No candles found — file is empty or not a recognized OHLC format';
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (![c.ts, c.open, c.high, c.low, c.close].every(Number.isFinite))
+      return `Row ${i}: ts/open/high/low/close must all be finite numbers`;
+    if (c.ts <= 0) return `Row ${i}: invalid timestamp (${c.ts})`;
+    if (c.open <= 0 || c.high <= 0 || c.low <= 0 || c.close <= 0)
+      return `Row ${i}: prices must be positive`;
+    if (c.high < c.low) return `Row ${i}: high (${c.high}) < low (${c.low})`;
+  }
+  return null;
+}
+
 // Read + parse a JSON candle file (for migration/import).
 export function parseCandleFile(filePath: string): Candle[] {
   const raw = JSON.parse(fs.readFileSync(path.resolve(filePath), 'utf8'));
