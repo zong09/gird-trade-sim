@@ -210,8 +210,9 @@ async function renderFilesPage() {
 
       <div class="card" style="margin-bottom:20px">
         <h3>Sync from Binance</h3>
-        <div style="position:relative;margin-bottom:10px">
-          <input type="text" id="binSearch" placeholder="Search crypto (e.g. BTC, ETH, SOL)…" autocomplete="off" style="width:100%">
+        <div class="field" style="margin:0 0 10px;position:relative">
+          <label>Crypto pair</label>
+          <input type="text" id="binSearch" placeholder="Search crypto (e.g. BTC, ETH, SOL)…" autocomplete="off">
           <div id="binResults" style="display:none;position:absolute;z-index:20;left:0;right:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;max-height:220px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,0.12)"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
@@ -238,15 +239,15 @@ async function renderFilesPage() {
       </div>
 
       <div class="card" style="margin-bottom:16px">
-        <h3>Upload JSON</h3>
+        <h3>Upload File</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div class="field" style="margin:0">
             <label>Asset Name <small style="color:#94a3b8">(e.g. BTC/THB)</small></label>
             <input type="text" id="newAssetName" placeholder="BTC/THB">
           </div>
           <div class="field" style="margin:0">
-            <label>File <small style="color:#94a3b8">(.json, max 400 MB)</small></label>
-            <input type="file" id="newAssetFile" accept=".json">
+            <label>File <small style="color:#94a3b8">(.json / .csv, max 400 MB)</small></label>
+            <input type="file" id="newAssetFile" accept=".json,.csv">
           </div>
         </div>
         <button onclick="doAddAsset()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Upload</button>
