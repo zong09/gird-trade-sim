@@ -1,15 +1,22 @@
 import fs from 'fs';
 import path from 'path';
 import { Candle } from './types';
+import { queryCandles } from './db';
 
 interface Period {
   start?: string;
   end?: string;
 }
 
-export function loadCandles(filePath: string, period: Period = {}): Candle[] {
-  const raw = JSON.parse(fs.readFileSync(path.resolve(filePath), 'utf8'));
+// Load candles for an asset (by name/symbol) from the SQLite store,
+// optionally filtered to a date period (YYYY-MM-DD).
+export function loadCandles(symbol: string, period: Period = {}): Candle[] {
+  return queryCandles(symbol, period);
+}
 
+// Parse raw JSON data into Candle[] — auto-detects 4 legacy input formats.
+// Used only when importing/migrating JSON files into the DB.
+export function parseCandleData(raw: any): Candle[] {
   let candles: Candle[] = [];
 
   if (Array.isArray(raw)) {
@@ -32,9 +39,11 @@ export function loadCandles(filePath: string, period: Period = {}): Candle[] {
   }
 
   candles.sort((a, b) => a.ts - b.ts);
+  return candles;
+}
 
-  const startTs = period.start ? Date.parse(period.start) / 1000 : 0;
-  const endTs   = period.end   ? Date.parse(period.end)   / 1000 + 86400 : Infinity;
-
-  return candles.filter(c => c.ts >= startTs && c.ts <= endTs);
+// Read + parse a JSON candle file (for migration/import).
+export function parseCandleFile(filePath: string): Candle[] {
+  const raw = JSON.parse(fs.readFileSync(path.resolve(filePath), 'utf8'));
+  return parseCandleData(raw);
 }

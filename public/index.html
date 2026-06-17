@@ -199,26 +199,46 @@ async function renderFilesPage() {
   main.innerHTML = '<div class="status"><div class="spinner"></div></div>';
   let files;
   try { files = await fetch('/api/files').then(r => r.json()); }
-  catch(e) { main.innerHTML = `<div class="error-box">Failed to load files: ${e.message}</div>`; return; }
+  catch(e) { main.innerHTML = `<div class="error-box">Failed to load assets: ${e.message}</div>`; return; }
 
   main.innerHTML = `
     <div style="max-width:860px;margin:0 auto;padding:24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
         <h2 style="font-size:16px;font-weight:700;color:#0f172a">Data Files</h2>
-        <span style="font-size:12px;color:#94a3b8">${files.length} file(s) in data</span>
+        <span style="font-size:12px;color:#94a3b8">${files.length} asset(s)</span>
       </div>
+
+      <div class="card" style="margin-bottom:20px">
+        <h3>Sync from Binance</h3>
+        <div style="position:relative;margin-bottom:10px">
+          <input type="text" id="binSearch" placeholder="Search crypto (e.g. BTC, ETH, SOL)…" autocomplete="off" style="width:100%">
+          <div id="binResults" style="display:none;position:absolute;z-index:20;left:0;right:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;max-height:220px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,0.12)"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+          <div class="field" style="margin:0"><label>Interval</label>
+            <select id="binInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div>
+          <div class="field" style="margin:0"><label>Start month</label><input type="month" id="binStart"></div>
+          <div class="field" style="margin:0"><label>End month</label><input type="month" id="binEnd"></div>
+        </div>
+        <div class="field" style="margin:0 0 10px"><label>Asset name <small style="color:#94a3b8">(stored in DB)</small></label><input type="text" id="binName" placeholder="BTC/USDT 1m"></div>
+        <input type="hidden" id="binSymbol">
+        <button id="binSyncBtn" onclick="doSync()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Sync</button>
+        <div id="syncLog" style="display:none;margin-top:12px;font-family:monospace;font-size:11px;max-height:220px;overflow:auto;background:#0f172a;color:#cbd5e1;border-radius:6px;padding:10px;white-space:pre-line"></div>
+      </div>
+
       <div class="card" style="margin-bottom:20px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-          <h3 style="margin:0">Current Files</h3>
-          <span style="font-size:11px;color:#94a3b8">Index controls dropdown order</span>
+          <h3 style="margin:0">Current Assets</h3>
+          <span style="font-size:11px;color:#94a3b8">Drag to reorder dropdown</span>
         </div>
         <table style="width:100%">
-          <thead><tr><th style="width:40px">Index</th><th>Filename</th><th>Asset Name</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th><th style="width:32px"></th></tr></thead>
+          <thead><tr><th style="width:40px">#</th><th>Asset</th><th>Rows</th><th>Date Range</th><th style="text-align:right">Actions</th><th style="width:32px"></th></tr></thead>
           <tbody id="filesTableBody"></tbody>
         </table>
       </div>
+
       <div class="card" style="margin-bottom:16px">
-        <h3>Add New Asset</h3>
+        <h3>Upload JSON</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div class="field" style="margin:0">
             <label>Asset Name <small style="color:#94a3b8">(e.g. BTC/THB)</small></label>
@@ -241,110 +261,161 @@ async function renderFilesPage() {
     </div>
   `;
 
-  // sort by asset order (assets with known order first, then unregistered files)
+  initSymbolSearch();
+
   let cfg;
   try { cfg = await fetch('/api/config').then(r => r.json()); } catch(_) { cfg = null; }
   let assetOrder = cfg ? cfg.assets.map(a => a.name) : [];
 
-  // Separate registered (ordered) vs unregistered files
-  const registered   = assetOrder.map(name => files.find(f => f.asset === name)).filter(Boolean);
-  const unregistered = files.filter(f => !f.asset || !assetOrder.includes(f.asset));
-  const orderedFiles = [...registered, ...unregistered];
+  const statByName = new Map(files.map(f => [f.name, f]));
+  const ordered    = [...new Set([...assetOrder, ...files.map(f => f.name)])];
 
   const tbody = document.getElementById('filesTableBody');
-  if (files.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No .json files found in data/</td></tr>';
+  if (ordered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No assets yet — sync from Binance or upload a JSON file.</td></tr>';
     return;
   }
 
-  // Drag-and-drop state
-  let dragSrcAsset = null;
-
+  let dragSrc = null;
   async function saveOrder(newOrder) {
     assetOrder = newOrder;
     await fetch('/api/files/reorder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ names: newOrder }) });
     await loadConfig();
   }
 
-  orderedFiles.forEach((f, i) => {
+  ordered.forEach((name, i) => {
+    const f  = statByName.get(name) || { name, rows: 0, first: null, last: null };
     const tr = document.createElement('tr');
     tr.className = 'file-row';
-    const mtime = new Date(f.mtime).toLocaleDateString('en-GB', { year:'numeric', month:'short', day:'numeric' });
-    const isRegistered = f.asset && assetOrder.includes(f.asset);
-    const orderIdx     = isRegistered ? assetOrder.indexOf(f.asset) : -1;
+    tr.draggable = true;
+    tr.style.cursor = 'grab';
+    tr.addEventListener('dragstart', e => { dragSrc = name; tr.style.opacity = '0.4'; e.dataTransfer.effectAllowed = 'move'; });
+    tr.addEventListener('dragend', () => { tr.style.opacity = ''; tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = ''); });
+    tr.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = ''); tr.style.borderTop = '2px solid #3b82f6'; });
+    tr.addEventListener('dragleave', () => { tr.style.borderTop = ''; });
+    tr.addEventListener('drop', async e => {
+      e.preventDefault(); tr.style.borderTop = '';
+      if (!dragSrc || dragSrc === name) return;
+      const newOrder = [...ordered];
+      const from = newOrder.indexOf(dragSrc), to = newOrder.indexOf(name);
+      if (from < 0 || to < 0) return;
+      newOrder.splice(from, 1); newOrder.splice(to, 0, dragSrc);
+      await saveOrder(newOrder);
+      renderFilesPage();
+    });
 
-    // Drag-and-drop (registered rows only)
-    if (isRegistered) {
-      tr.draggable = true;
-      tr.style.cursor = 'grab';
-      tr.addEventListener('dragstart', e => {
-        dragSrcAsset = f.asset;
-        tr.style.opacity = '0.4';
-        e.dataTransfer.effectAllowed = 'move';
-      });
-      tr.addEventListener('dragend', () => { tr.style.opacity = ''; tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = ''); });
-      tr.addEventListener('dragover', e => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        tbody.querySelectorAll('tr').forEach(r => r.style.borderTop = '');
-        tr.style.borderTop = '2px solid #3b82f6';
-      });
-      tr.addEventListener('dragleave', () => { tr.style.borderTop = ''; });
-      tr.addEventListener('drop', async e => {
-        e.preventDefault();
-        tr.style.borderTop = '';
-        if (!dragSrcAsset || dragSrcAsset === f.asset) return;
-        const newOrder = [...assetOrder];
-        const from = newOrder.indexOf(dragSrcAsset);
-        const to   = newOrder.indexOf(f.asset);
-        if (from < 0 || to < 0) return;
-        newOrder.splice(from, 1);
-        newOrder.splice(to, 0, dragSrcAsset);
-        await saveOrder(newOrder);
-        renderFilesPage();
-      });
-    }
-
-    // Index cell — just number + drag handle icon
     const tdIdx = document.createElement('td');
     tdIdx.style.cssText = 'text-align:center;padding:8px 4px;user-select:none';
-    if (isRegistered) {
-      tdIdx.innerHTML = `<span style="font-size:12px;font-weight:700;color:#1e293b">${orderIdx + 1}</span>`;
-    } else {
-      tdIdx.innerHTML = '<span style="color:#94a3b8;font-size:11px">—</span>';
-    }
-
-    const tdName = document.createElement('td');
-    tdName.style.fontFamily = 'monospace'; tdName.style.fontSize = '12px';
-    tdName.textContent = f.name;
+    tdIdx.innerHTML = `<span style="font-size:12px;font-weight:700;color:#1e293b">${i + 1}</span>`;
     const tdAsset = document.createElement('td');
-    if (f.asset) { tdAsset.textContent = f.asset; tdAsset.style.fontWeight = '600'; }
-    else { tdAsset.textContent = '—'; tdAsset.style.color = '#94a3b8'; }
-    const tdSize = document.createElement('td');
-    tdSize.textContent = fmtSize(f.size);
-    const tdDate = document.createElement('td');
-    tdDate.style.color = '#94a3b8'; tdDate.textContent = mtime;
+    tdAsset.textContent = name; tdAsset.style.fontWeight = '600';
+    const tdRows = document.createElement('td');
+    tdRows.textContent = f.rows ? f.rows.toLocaleString() : '—';
+    if (!f.rows) tdRows.style.color = '#ef4444';
+    const tdRange = document.createElement('td');
+    tdRange.style.color = '#94a3b8';
+    tdRange.textContent = f.first ? `${f.first} → ${f.last}` : 'no data';
     const tdActions = document.createElement('td');
     tdActions.style.textAlign = 'right';
-
-    const replaceLabel = document.createElement('label');
-    replaceLabel.className = 'btn-replace';
-    replaceLabel.textContent = 'Replace';
-    const replaceInput = document.createElement('input');
-    replaceInput.type = 'file'; replaceInput.accept = '.json'; replaceInput.style.display = 'none';
-    replaceInput.onchange = () => doReplace(f.name, replaceInput);
-    replaceLabel.appendChild(replaceInput);
-
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-delete'; deleteBtn.textContent = 'Delete';
-    deleteBtn.onclick = () => doDelete(f.name);
-
-    tdActions.appendChild(replaceLabel); tdActions.appendChild(deleteBtn);
+    deleteBtn.onclick = () => doDelete(name);
+    tdActions.appendChild(deleteBtn);
     const tdHandle = document.createElement('td');
     tdHandle.style.cssText = 'text-align:center;color:#cbd5e1;font-size:16px;user-select:none';
-    tdHandle.textContent = isRegistered ? '⠿' : '';
-    tr.appendChild(tdIdx); tr.appendChild(tdName); tr.appendChild(tdAsset); tr.appendChild(tdSize); tr.appendChild(tdDate); tr.appendChild(tdActions); tr.appendChild(tdHandle);
+    tdHandle.textContent = '⠿';
+    tr.append(tdIdx, tdAsset, tdRows, tdRange, tdActions, tdHandle);
     tbody.appendChild(tr);
+  });
+}
+
+// ── Binance symbol search + sync ─────────────────────────────────────
+function binDefaultName() {
+  const sym  = document.getElementById('binSymbol').value;   // e.g. BTC/USDT
+  const intv = document.getElementById('binInterval').value;
+  return sym ? `${sym} ${intv}` : '';
+}
+
+function initSymbolSearch() {
+  const input   = document.getElementById('binSearch');
+  const results = document.getElementById('binResults');
+  if (!input) return;
+  // default month range: last 12 complete months
+  const now = new Date();
+  const ym  = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  document.getElementById('binEnd').value   = ym(prevMonth);
+  document.getElementById('binStart').value = ym(new Date(prevMonth.getFullYear() - 1, prevMonth.getMonth(), 1));
+
+  let timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (!q) { results.style.display = 'none'; return; }
+      try {
+        const list = await fetch('/api/binance/symbols?q=' + encodeURIComponent(q)).then(r => r.json());
+        if (!Array.isArray(list) || !list.length) { results.style.display = 'none'; return; }
+        results.innerHTML = '';
+        list.forEach(s => {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:7px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9';
+          item.textContent = `${s.base}/${s.quote}  (${s.symbol})`;
+          item.onmouseenter = () => item.style.background = '#f1f5f9';
+          item.onmouseleave = () => item.style.background = '#fff';
+          item.onclick = () => {
+            document.getElementById('binSymbol').value = `${s.base}/${s.quote}`;
+            input.dataset.binance = s.symbol;
+            input.value = `${s.base}/${s.quote} (${s.symbol})`;
+            document.getElementById('binName').value = binDefaultName();
+            results.style.display = 'none';
+          };
+          results.appendChild(item);
+        });
+        results.style.display = 'block';
+      } catch(_) { results.style.display = 'none'; }
+    }, 300);
+  });
+  document.getElementById('binInterval').addEventListener('change', () => {
+    if (document.getElementById('binSymbol').value) document.getElementById('binName').value = binDefaultName();
+  });
+  document.addEventListener('click', e => {
+    if (!results.contains(e.target) && e.target !== input) results.style.display = 'none';
+  });
+}
+
+function doSync() {
+  const symbol   = document.getElementById('binSearch').dataset.binance;
+  const interval = document.getElementById('binInterval').value;
+  const start    = document.getElementById('binStart').value;   // YYYY-MM
+  const end      = document.getElementById('binEnd').value;
+  const name     = document.getElementById('binName').value.trim() || binDefaultName();
+  if (!symbol) { alert('Search and select a crypto pair first'); return; }
+  if (!start || !end || !name) { alert('Set start month, end month, and asset name'); return; }
+
+  const log = document.getElementById('syncLog');
+  const btn = document.getElementById('binSyncBtn');
+  log.style.display = 'block';
+  log.textContent = `Syncing ${symbol} ${interval} ${start}..${end} → "${name}"\n`;
+  btn.disabled = true; btn.style.opacity = '0.6';
+
+  const url = `/api/binance/sync?symbol=${encodeURIComponent(symbol)}&interval=${interval}&start=${start}&end=${end}&name=${encodeURIComponent(name)}`;
+  const es  = new EventSource(url);
+  es.addEventListener('progress', e => {
+    const p = JSON.parse(e.data);
+    log.textContent += `  ${p.month}  ${p.status.padEnd(10)} +${p.rows} rows\n`;
+    log.scrollTop = log.scrollHeight;
+  });
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    log.textContent += `Done: ${d.rowsAdded} new rows across ${d.months} months\n`;
+    es.close(); btn.disabled = false; btn.style.opacity = '1';
+    loadConfig();
+    setTimeout(renderFilesPage, 800);
+  });
+  es.addEventListener('error', e => {
+    log.textContent += `Error${e.data ? ': ' + JSON.parse(e.data).message : ' (connection lost)'}\n`;
+    es.close(); btn.disabled = false; btn.style.opacity = '1';
   });
 }
 
@@ -451,10 +522,10 @@ async function doAddAsset() {
   setTimeout(renderFilesPage, 1500);
 }
 
-async function doDelete(filename) {
-  if (!confirm(`Delete ${filename}?\nThis will also remove the asset from config if it references this file.`)) return;
+async function doDelete(name) {
+  if (!confirm(`Delete asset "${name}"?\nThis drops all its candles from the database.`)) return;
   try {
-    const r = await fetch(`/api/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const r = await fetch(`/api/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || 'Delete failed');
     await loadConfig();
