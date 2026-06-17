@@ -10,20 +10,31 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 - **Scenario Analysis** — Base (neutral) and Bull case with configurable annual drift %; grid center auto-shifts to geometric midpoint of expected range
 - **Auto Grid Config** — Sweeps multiple width % and grid count combinations; picks best per scenario
 - **Configurable Capital** — Set investment amount in the UI; recommendation cards show estimated annual profit for both realized and total APY
-- **Data File Management** — Upload, replace, and delete OHLC files from the browser; drag-and-drop to reorder assets (controls dropdown order)
+- **SQLite candle store** — All candles live in `data/candles.db` (better-sqlite3), keyed by asset name; backtest/sim query only the needed date range instead of parsing whole files
+- **Binance sync** — Search any Binance pair and pull monthly klines from data.binance.vision straight into the DB, with live progress (CLI or a "Sync" button in the dashboard)
+- **Data management** — Upload `.json` or `.csv` (header-aware, e.g. Bitkub), delete assets, drag-and-drop to reorder (controls dropdown order)
 - **Web Dashboard** — Single-page UI with Chart.js, scenario tabs, and recommendation cards
 
 ## Setup
 
 ```bash
-npm install
+npm install   # builds better-sqlite3; needs curl + unzip on PATH for Binance sync
 ```
 
-Place OHLC JSON files in `data/` (not included in repo). File paths are configured in `config.json` under each asset's `dataFile` field.
+Candles are stored in `data/candles.db` (gitignored). Load data by:
 
-### Supported JSON formats
+- **Sync from Binance** — Data Files tab → search a pair → pick interval + month range → Sync. Or CLI:
+  ```bash
+  npx ts-node fetch-binance.ts BTCUSDT 1m 2024-06 2026-05 --name "BTC/USDT 1m"
+  ```
+- **Upload** a `.json` or `.csv` file in the Data Files tab.
+- **Migrate** legacy JSON-file assets listed in `data/asset-config.json`: `npx ts-node migrate-to-sqlite.ts`
 
-The loader auto-detects the format:
+### Supported upload formats
+
+**CSV** — any file with a header row exposing a time column (`timestamp`/`ts`/`time`/`date`) plus `open,high,low,close` (e.g. Bitkub exports). Timestamps in seconds/ms/μs are normalized automatically.
+
+**JSON** — the loader auto-detects 4 formats:
 
 **Format 1 — aggregated_point** (hourly candle with nested minute raw_points)
 ```json
