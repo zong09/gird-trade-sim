@@ -3,7 +3,9 @@ import path    from 'path';
 import fs      from 'fs';
 import multer  from 'multer';
 import { Config, AssetConfig, Asset }                    from './types';
-import { loadCandles }                                   from './loader';
+import { loadCandles, parseCandleData, parseCsvData, validateCandles } from './loader';
+import { listSymbols, insertCandles, deleteSymbol }      from './db';
+import { searchSymbols, syncKlines }                     from './binance';
 import { runBacktest, resolveGridParams }                from './engine';
 import { runMonteCarlo, getRecommendation, autoGenParamSets } from './simulator';
 
@@ -38,16 +40,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, dataDir),
-  filename: (req, file, cb) => cb(null, (req.body?.targetFilename as string) || file.originalname),
-});
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.originalname.toLowerCase().endsWith('.json')) cb(null, true);
-    else cb(new Error('Only .json files are allowed'));
+    const n = file.originalname.toLowerCase();
+    if (n.endsWith('.json') || n.endsWith('.csv')) cb(null, true);
+    else cb(new Error('Only .json or .csv files are allowed'));
   },
 });
 
@@ -70,11 +69,9 @@ app.post('/api/run', async (req, res) => {
     const asset     = cfg.assets.find(a => a.name === assetName);
     if (!asset) return res.status(400).json({ error: `Asset "${assetName}" not found` });
 
-    const dataFile = path.resolve(__dirname, asset.dataFile);
-
     // Backtest
     const investment = cfg.simulation.investment ?? DEFAULT_INVESTMENT;
-    const btCandles  = loadCandles(dataFile, cfg.backtest.period);
+    const btCandles  = loadCandles(assetName, cfg.backtest.period);
     const gridParams = cfg.backtest.auto
       ? resolveGridParams(btCandles, cfg.backtest.auto, investment, cfg.feeRate)
       : { minPrice: cfg.backtest.minPrice!, maxPrice: cfg.backtest.maxPrice!, numGrids: cfg.backtest.numGrids! };
@@ -82,7 +79,7 @@ app.post('/api/run', async (req, res) => {
 
     // Simulation — auto-generate paramSets from training data
     const sim       = cfg.simulation;
-    const simData = loadCandles(dataFile, sim.trainingPeriod ?? {});
+    const simData = loadCandles(assetName, sim.trainingPeriod ?? {});
     const opts    = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
     const scenarios = (sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }]);
 
@@ -114,37 +111,50 @@ app.get('/api/output/:asset', (req, res) => {
   res.json(fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null);
 });
 
+// List assets (from SQLite) with row counts + date range, in asset-config order.
 app.get('/api/files', (_req, res) => {
-  const assets = readAssets();
-  const files = fs.existsSync(dataDir)
-    ? fs.readdirSync(dataDir)
-        .filter(f => f.endsWith('.json') && f !== 'asset-config.json')
-        .map(name => {
-          const stat = fs.statSync(path.join(dataDir, name));
-          const asset = assets.find(a => a.dataFile === `./data/${name}`)?.name ?? null;
-          return { name, asset, size: stat.size, mtime: stat.mtime.toISOString() };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name))
-    : [];
+  const stats = new Map(listSymbols().map(s => [s.symbol, s]));
+  const order = readAssets().map(a => a.name);
+  const names = [...new Set([...order, ...stats.keys()])];
+  const files = names.map(name => {
+    const s = stats.get(name);
+    return {
+      name,
+      rows:  s?.rows ?? 0,
+      first: s ? new Date(s.first * 1000).toISOString().slice(0, 10) : null,
+      last:  s ? new Date(s.last  * 1000).toISOString().slice(0, 10) : null,
+    };
+  });
   res.json(files);
 });
 
+// Upload a JSON candle file → parse → import into SQLite under assetName.
 app.post('/api/files/upload', (req, res) => {
   upload.single('file')(req as any, res as any, (err: any) => {
     if (err) { res.status(400).json({ error: err.message }); return; }
     if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
     try {
-      const { filename, size } = req.file;
       const assetName = (req.body?.assetName as string | undefined)?.trim();
-      if (assetName) {
-        const assetCfg = ensureAssetConfig();
-        const dataFile = `./data/${filename}`;
-        if (!assetCfg.assets.find(a => a.name === assetName)) {
-          assetCfg.assets.push({ name: assetName, dataFile });
-          fs.writeFileSync(assetCfgPath, JSON.stringify(assetCfg, null, 2));
-        }
+      if (!assetName) { res.status(400).json({ error: 'assetName is required' }); return; }
+      const text = req.file.buffer.toString('utf8');
+      let candles;
+      if (req.file.originalname.toLowerCase().endsWith('.csv')) {
+        candles = parseCsvData(text);   // throws on missing required columns
+      } else {
+        let raw: any;
+        try { raw = JSON.parse(text); }
+        catch { res.status(400).json({ error: 'File is not valid JSON' }); return; }
+        candles = parseCandleData(raw);
       }
-      res.json({ name: filename, size });
+      const invalid = validateCandles(candles);
+      if (invalid) { res.status(400).json({ error: invalid }); return; }
+      const rows = insertCandles(assetName, candles);
+      const assetCfg = ensureAssetConfig();
+      if (!assetCfg.assets.find(a => a.name === assetName)) {
+        assetCfg.assets.push({ name: assetName });
+        fs.writeFileSync(assetCfgPath, JSON.stringify(assetCfg, null, 2));
+      }
+      res.json({ name: assetName, rows });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -166,19 +176,47 @@ app.post('/api/files/reorder', (req, res) => {
   }
 });
 
-app.delete('/api/files/:filename', (req, res) => {
+// Delete an asset: drop its candles from SQLite + remove from asset-config.
+app.delete('/api/files/:name', (req, res) => {
   try {
-    const filename = path.basename(req.params.filename);
-    const filePath = path.join(dataDir, filename);
-    if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'File not found' }); return; }
-    fs.unlinkSync(filePath);
+    const name = decodeURIComponent(req.params.name);
+    deleteSymbol(name);
     const assetCfg = ensureAssetConfig();
-    assetCfg.assets = assetCfg.assets.filter(a => a.dataFile !== `./data/${filename}`);
+    assetCfg.assets = assetCfg.assets.filter(a => a.name !== name);
     fs.writeFileSync(assetCfgPath, JSON.stringify(assetCfg, null, 2));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Search Binance trading pairs (cached exchangeInfo).
+app.get('/api/binance/symbols', async (req, res) => {
+  try {
+    res.json(await searchSymbols((req.query.q as string) || ''));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Sync klines from data.binance.vision into SQLite, streaming progress via SSE.
+app.get('/api/binance/sync', async (req, res) => {
+  const { symbol, interval, start, end, name } = req.query as Record<string, string>;
+  if (!symbol || !interval || !start || !end || !name) {
+    res.status(400).json({ error: 'symbol, interval, start, end, name are required' });
+    return;
+  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const send = (event: string, data: any) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  try {
+    const result = await syncKlines({ symbol, interval, start, end, name }, p => send('progress', p));
+    send('done', result);
+  } catch (e: any) {
+    send('error', { message: e.message });
+  }
+  res.end();
 });
 
 const server = app.listen(PORT, () => {

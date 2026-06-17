@@ -6,12 +6,16 @@ Grid trading backtest and Monte Carlo simulation for crypto pairs (BTC/THB, ETH/
 
 - **engine.ts** — Core backtest engine. Tracks realized P&L, fees, trades, volume, and unrealized P&L (mark-to-market at end date). Returns both `apy` (realized) and `totalApy` (realized + unrealized).
 - **simulator.ts** — Monte Carlo simulation via block bootstrap resampling. Returns percentiles for both realized and total APY (`median`/`p10`…`p90` and `totalMedian`/`totalP10`…`totalP90`). Supports annual drift for bull case scenarios.
-- **loader.ts** — Loads and filters OHLC candles from JSON files. Auto-detects 4 input formats.
-- **server.ts** — Express API server. Endpoints: `GET /api/config`, `POST /api/run`, `GET /api/files`, `POST /api/files/upload`, `POST /api/files/reorder`, `DELETE /api/files/:filename`.
+- **db.ts** — SQLite store (`better-sqlite3`). Table `candles(symbol, ts, open, high, low, close)` PK `(symbol, ts)`. `insertCandles` (INSERT OR IGNORE dedup), `queryCandles` (range by period), `listSymbols`, `deleteSymbol`. DB file: `data/candles.db`.
+- **loader.ts** — `loadCandles(symbol, period)` reads from SQLite by date range. `parseCandleData` (4 JSON formats) + `parseCsvData` (header-aware CSV, e.g. Bitkub) + `validateCandles` — used for import/upload only.
+- **binance.ts** — Binance integration. `searchSymbols` (cached exchangeInfo) + `syncKlines` (downloads monthly klines from data.binance.vision via curl+unzip, normalizes ts to seconds, inserts to DB). CSV cache: `data/binance/{SYMBOL}/{INTERVAL}/`.
+- **fetch-binance.ts** — CLI wrapper over `binance.syncKlines`.
+- **migrate-to-sqlite.ts** — One-time import of legacy JSON-file assets into the DB.
+- **server.ts** — Express API. Endpoints: `GET /api/config`, `POST /api/run`, `GET /api/files` (DB-backed asset list), `POST /api/files/upload` (.json/.csv → DB), `POST /api/files/reorder`, `DELETE /api/files/:name`, `GET /api/binance/symbols`, `GET /api/binance/sync` (SSE progress).
 - **run.ts** — CLI runner for batch backtest + simulation.
 - **config.json** — Simulation/backtest parameters (fee rate, periods, grid sweep options, scenarios). Does NOT store assets — those live in `data/asset-config.json`.
-- **data/asset-config.json** — Asset registry `{ assets: [{ name, dataFile }] }`. Order here controls the dashboard dropdown order.
-- **public/index.html** — Single-file dashboard UI (Chart.js).
+- **data/asset-config.json** — Asset registry `{ assets: [{ name, dataFile? }] }`. Order controls dashboard dropdown order. Candles live in SQLite by `name`; `dataFile` is legacy/optional.
+- **public/index.html** — Single-file dashboard UI (Chart.js). Data Files tab has Binance crypto search + Sync button, JSON/CSV upload, and drag-reorder.
 
 ## Key Concepts
 
@@ -25,14 +29,17 @@ Grid trading backtest and Monte Carlo simulation for crypto pairs (BTC/THB, ETH/
 - **Simulation APY**: both realized and total percentiles are computed and shown in table and recommendation cards
 - **Capital**: configurable via UI (`simulation.investment`); used for both backtest and simulation. Recommendation cards show est. annual profit for both APY types.
 - **Asset order**: controlled by `data/asset-config.json` array order; drag-and-drop in Data Files tab to reorder.
+- **Candle store**: all candles in `data/candles.db` (SQLite), keyed by asset name. Backtest/sim query only the needed date range — no full-file parse.
+- **Data sources**: (1) UI **Sync from Binance** — search a pair, pick interval + month range → downloads from data.binance.vision; (2) **Upload** a `.json` or `.csv` (header-aware, e.g. Bitkub) in the Data Files tab; (3) CLI `fetch-binance.ts`.
+- **ts unit**: stored as **seconds**. Binance klines (μs/ms) are normalized on import.
 
 ## Setup
 
 ```bash
-npm install
+npm install   # builds better-sqlite3 (needs curl + unzip on PATH for Binance sync)
 ```
 
-Data files go in `data/` (not in repo). Upload via the browser Data Files tab, or place manually and register in `data/asset-config.json`.
+Candles live in `data/candles.db` (gitignored). Get data via the UI **Sync from Binance** / **Upload** (.json/.csv), or migrate legacy JSON files with `npx ts-node migrate-to-sqlite.ts`.
 
 ## Usage
 
@@ -47,7 +54,13 @@ npx ts-node server.ts
 
 ```bash
 npx ts-node run.ts          # all assets
-npx ts-node run.ts BTC/THB  # single asset
+npx ts-node run.ts BTC/THB  # single asset (case-insensitive)
+```
+
+### Sync data from Binance (CLI)
+
+```bash
+npx ts-node fetch-binance.ts BTCUSDT 1m 2024-06 2026-05 --name "BTC/USDT 1m"
 ```
 
 ## Config

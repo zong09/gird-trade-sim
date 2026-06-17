@@ -13,9 +13,9 @@ const fmt             = (n: number) => n.toLocaleString('th-TH', { maximumFracti
 const BASE_INVESTMENT = 100_000;
 
 // รัน asset เดียว หรือทั้งหมด: node run.ts [BTC|ETH|...]
-const targetName  = process.argv[2]?.toUpperCase();
+const targetName  = process.argv[2];
 const assetsToRun = targetName
-  ? cfg.assets.filter(a => a.name === targetName)
+  ? cfg.assets.filter(a => a.name.toUpperCase() === targetName.toUpperCase())
   : cfg.assets;
 
 if (assetsToRun.length === 0) {
@@ -25,13 +25,12 @@ if (assetsToRun.length === 0) {
 
 for (const asset of assetsToRun) {
   const Q        = asset.name.split('/')[1] ?? 'THB';
-  const dataFile = path.resolve(__dirname, asset.dataFile);
   console.log(`\n${'═'.repeat(55)}`);
   console.log(`  Asset: ${asset.name}`);
   console.log('═'.repeat(55));
 
   // ── Backtest ──────────────────────────────────────────────
-  const btCandles  = loadCandles(dataFile, cfg.backtest.period);
+  const btCandles  = loadCandles(asset.name, cfg.backtest.period);
   const gridParams = cfg.backtest.auto
     ? resolveGridParams(btCandles, cfg.backtest.auto, BASE_INVESTMENT, cfg.feeRate)
     : { minPrice: cfg.backtest.minPrice!, maxPrice: cfg.backtest.maxPrice!, numGrids: cfg.backtest.numGrids! };
@@ -50,7 +49,7 @@ for (const asset of assetsToRun) {
 
   // ── Simulation ────────────────────────────────────────────
   const sim       = cfg.simulation;
-  const simData   = loadCandles(dataFile, sim.trainingPeriod ?? {});
+  const simData   = loadCandles(asset.name, sim.trainingPeriod ?? {});
   const scenarios = sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }];
   const opts      = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
 

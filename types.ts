@@ -100,7 +100,7 @@ export interface AutoGridConfig {
 
 export interface Asset {
   name: string;       // full pair e.g. "BTC/THB", "BTC/USDT"
-  dataFile: string;
+  dataFile?: string;  // legacy JSON path (optional); candles now live in SQLite by name
 }
 
 export interface AssetConfig {
