@@ -12,6 +12,7 @@ export interface GridParams {
   numGrids: number;
   investment: number;
   feeRate?: number;
+  slippage?: number;   // per-side execution slippage, e.g. 0.0005 = 0.05%
 }
 
 export interface WeeklySnapshot {
@@ -24,6 +25,7 @@ export interface WeeklySnapshot {
 export interface BacktestResult extends GridParams {
   feeRate: number;
   firstPrice: number;
+  firstMatchPrice: number;   // grid line price of the first executed trade
   pnl: number;
   fees: number;
   trades: number;
@@ -32,10 +34,50 @@ export interface BacktestResult extends GridParams {
   unrealized: number;
   totalPnl: number;
   totalApy: number;
+  totalReturnPct: number;   // totalPnl as % of capital (not annualized)
   spacing: number;
   spacingPct: number;
   profitPerRoundTrip: number;
   snapshots: WeeklySnapshot[];
+}
+
+// Summary row for a saved backtest run — every column except the result_json blob.
+export interface BacktestRunSummary {
+  id: number;
+  created_at: number;   // epoch seconds
+  label: string | null;
+  symbol: string;
+  start: string;
+  end: string;
+  width_pct: number | null;
+  num_grids: number;
+  investment: number;
+  fee_rate: number;
+  slippage: number | null;
+  realized_apy: number;
+  total_apy: number;
+  pnl: number;
+  total_pnl: number;
+  trades: number;
+}
+
+// A saved run loaded back in full, including the BacktestResult parsed from result_json.
+export interface SavedBacktestRun extends BacktestRunSummary {
+  result: BacktestResult;
+}
+
+// Payload accepted by saveBacktestRun / POST /api/runs.
+export interface SaveBacktestRunInput {
+  label?: string | null;
+  symbol: string;
+  start: string;
+  end: string;
+  widthPct?: number | null;
+  numGrids: number;
+  investment: number;
+  feeRate: number;
+  slippage?: number | null;
+  result: BacktestResult;
 }
 
 export interface ParamSet {
@@ -121,6 +163,7 @@ export interface Scenario {
 export interface Config {
   assets: Asset[];
   feeRate: number;
+  slippage?: number;   // per-side execution slippage, e.g. 0.0005 = 0.05%
   backtest: {
     period: { start?: string; end?: string };
     auto?: AutoGridConfig;

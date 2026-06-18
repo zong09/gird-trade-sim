@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login · Grid Trading Simulation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; font-size: 14px;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px 28px; width: 320px; box-shadow: 0 1px 3px rgba(15,23,42,.06); }
+  .card h1 { font-size: 16px; font-weight: 600; color: #0f172a; margin-bottom: 4px; }
+  .card .sub { font-size: 12px; color: #94a3b8; margin-bottom: 22px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: #64748b; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; color: #1e293b; background: #f8fafc; outline: none; }
+  .field input:focus { border-color: #3b82f6; background: #fff; }
+  .btn { width: 100%; padding: 10px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; transition: background .15s; }
+  .btn:hover { background: #2563eb; }
+  .btn:disabled { background: #93c5fd; cursor: not-allowed; }
+  .error-box { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 9px 12px; border-radius: 8px; font-size: 12px; margin-top: 14px; display: none; }
+</style>
+</head>
+<body>
+  <form class="card" id="loginForm">
+    <h1>Grid Trading Simulation</h1>
+    <div class="sub">Sign in to continue</div>
+    <div class="field">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" autofocus required>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn" type="submit" id="submitBtn">Login</button>
+    <div class="error-box" id="err"></div>
+  </form>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const err  = document.getElementById('err');
+    const btn  = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.style.display = 'none';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        if (res.ok) { location.href = '/'; return; }
+        const data = await res.json().catch(() => ({}));
+        err.textContent = data.error || 'Login failed';
+        err.style.display = 'block';
+      } catch (e) {
+        err.textContent = 'Network error';
+        err.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
