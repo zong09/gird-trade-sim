@@ -1,5 +1,6 @@
 {
   "feeRate": 0.0025,
+  "slippage": 0.0005,
   "backtest": {
     "period": {
       "start": "2025-05-31",
@@ -7,16 +8,8 @@
     },
     "auto": {
       "widthPct": 100,
-      "numGridsOptions": [
-        10,
-        15,
-        20,
-        25,
-        30,
-        40,
-        50
-      ],
-      "numGrids": 54
+      "numGridsOptions": [10, 15, 20, 25, 30, 40, 50],
+      "numGrids": 82
     }
   },
   "simulation": {
@@ -30,19 +23,8 @@
     "blockSize": 48,
     "seed": 42,
     "autoParamSets": {
-      "widthPcts": [
-        40,
-        60,
-        80,
-        100,
-        120
-      ],
-      "numGridsOptions": [
-        20,
-        30,
-        40,
-        50
-      ]
+      "widthPcts": [40, 60, 80, 100, 120],
+      "numGridsOptions": [20, 30, 40, 50]
     },
     "scenarios": [
       {
