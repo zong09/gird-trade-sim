@@ -4,10 +4,15 @@ import fs      from 'fs';
 import multer  from 'multer';
 import { Config, AssetConfig, Asset }                    from './types';
 import { loadCandles, parseCandleData, parseCsvData, validateCandles } from './loader';
-import { listSymbols, insertCandles, deleteSymbol }      from './db';
+import { listSymbols, insertCandles, deleteSymbol,
+         saveBacktestRun, listBacktestRuns, getBacktestRun, deleteBacktestRun } from './db';
 import { searchSymbols, syncKlines }                     from './binance';
 import { runBacktest, resolveGridParams }                from './engine';
 import { runMonteCarlo, getRecommendation, autoGenParamSets } from './simulator';
+import { initLogger, requestLogger }                     from './logger';
+import { requireAuth, login, logout }                    from './auth';
+
+initLogger();
 
 const app             = express();
 const PORT            = 3000;
@@ -35,6 +40,10 @@ function readConfig(): Config {
 }
 
 app.use(express.json());
+app.use(requestLogger);
+app.post('/api/login', login);
+app.post('/api/logout', logout);
+app.use(requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const dataDir = path.join(__dirname, 'data');
@@ -73,9 +82,9 @@ app.post('/api/run', async (req, res) => {
     const investment = cfg.simulation.investment ?? DEFAULT_INVESTMENT;
     const btCandles  = loadCandles(assetName, cfg.backtest.period);
     const gridParams = cfg.backtest.auto
-      ? resolveGridParams(btCandles, cfg.backtest.auto, investment, cfg.feeRate)
+      ? resolveGridParams(btCandles, cfg.backtest.auto, investment, cfg.feeRate, cfg.slippage)
       : { minPrice: cfg.backtest.minPrice!, maxPrice: cfg.backtest.maxPrice!, numGrids: cfg.backtest.numGrids! };
-    const bt = runBacktest(btCandles, { ...gridParams, investment, feeRate: cfg.feeRate });
+    const bt = runBacktest(btCandles, { ...gridParams, investment, feeRate: cfg.feeRate, slippage: cfg.slippage });
 
     // Simulation — auto-generate paramSets from training data
     const sim       = cfg.simulation;
@@ -87,7 +96,7 @@ app.post('/api/run', async (req, res) => {
       const paramSets  = autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift);
       const simResults = runMonteCarlo({
         candles: simData, paramSets,
-        investment, feeRate: cfg.feeRate,
+        investment, feeRate: cfg.feeRate, slippage: cfg.slippage,
         numSims: sim.numSims, hoursAhead: sim.hoursAhead,
         blockSize: sim.blockSize, seed: sim.seed,
         annualDrift: sc.annualDrift,
@@ -104,6 +113,42 @@ app.post('/api/run', async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Save a backtest run (backtest result only — no simulation).
+app.post('/api/runs', (req, res) => {
+  try {
+    const b = req.body ?? {};
+    if (!b.backtest || !b.asset) return res.status(400).json({ error: 'asset and backtest required' });
+    const id = saveBacktestRun({
+      label:      b.label ?? null,
+      symbol:     b.asset,
+      start:      b.start,
+      end:        b.end,
+      widthPct:   b.widthPct ?? null,
+      numGrids:   b.backtest.numGrids,
+      investment: b.investment ?? b.backtest.investment,
+      feeRate:    b.backtest.feeRate,
+      slippage:   b.backtest.slippage ?? null,
+      result:     b.backtest,
+    });
+    res.json({ id });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/runs', (_req, res) => res.json(listBacktestRuns()));
+
+app.get('/api/runs/:id', (req, res) => {
+  const run = getBacktestRun(Number(req.params.id));
+  if (!run) return res.status(404).json({ error: 'run not found' });
+  res.json(run);
+});
+
+app.delete('/api/runs/:id', (req, res) => {
+  deleteBacktestRun(Number(req.params.id));
+  res.json({ ok: true });
 });
 
 app.get('/api/output/:asset', (req, res) => {

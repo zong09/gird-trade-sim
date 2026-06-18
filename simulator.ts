@@ -31,6 +31,7 @@ interface MonteCarloOptions {
   paramSets: ParamSet[];
   investment?: number;
   feeRate?: number;
+  slippage?: number;
   numSims?: number;
   hoursAhead?: number;
   blockSize?: number;
@@ -82,6 +83,7 @@ export function runMonteCarlo({
   paramSets,
   investment  = 100_000,
   feeRate     = 0.0025,
+  slippage    = 0,
   numSims     = 300,
   hoursAhead  = 8760,
   blockSize   = 48,
@@ -123,7 +125,7 @@ export function runMonteCarlo({
       const c: Candle[] = prices.slice(1).map((p, i) => ({
         ts: i * 3600, open: prices[i], high: p * hi[i], low: p * lo[i], close: p,
       }));
-      const r = runBacktest(c, { ...ps, investment, feeRate });
+      const r = runBacktest(c, { ...ps, investment, feeRate, slippage });
       return { apy: r.apy, totalApy: r.totalApy, trades: r.trades };
     });
     const apys      = results.map(r => r.apy).sort((a, b) => a - b);
@@ -152,7 +154,7 @@ export function runMonteCarlo({
       probAboveTarget:   +(apys.filter(v => v >= 8).length / apys.length * 100).toFixed(1),
       probPositive:      +(apys.filter(v => v >  0).length / apys.length * 100).toFixed(1),
       avgTradesPerYear:  avgTrades,
-      profitPerRoundTrip:+(spacing / mid * 100 - feeRate * 2 * 100).toFixed(2),
+      profitPerRoundTrip:+(spacing / mid * 100 - feeRate * 2 * 100 - slippage * 2 * 100).toFixed(2),
     };
   });
 }

@@ -5,6 +5,8 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 ## Features
 
 - **Backtest** — Run grid trading on historical OHLC data with no look-ahead bias
+- **Crossing-based fills** — Orders fill only on a genuine price crossing: a buy on a downward cross (price was above the level, then dipped to it), a sell on an upward cross. Levels the price never traded through are never filled, so no phantom inventory or fake mark-to-market loss
+- **Save & replay runs** — Persist a backtest result with the dashboard "Save run" button; the History tab lists saved runs and can reload one (replaying the cards + returns chart) or delete it. Stored in SQLite (`backtest_runs`), backtest only, ~5KB/run
 - **Realized vs Total APY** — Separates closed round-trips from mark-to-market unrealized P&L; both shown in simulation results and recommendation cards
 - **Monte Carlo** — Block bootstrap resampling (configurable simulations, 1-year forward)
 - **Scenario Analysis** — Base (neutral) and Bull case with configurable annual drift %; grid center auto-shifts to geometric midpoint of expected range

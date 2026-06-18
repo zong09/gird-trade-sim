@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs   from 'fs';
-import { Candle } from './types';
+import { Candle, BacktestRunSummary, SavedBacktestRun, SaveBacktestRunInput } from './types';
 
 interface Period {
   start?: string;
@@ -34,6 +34,26 @@ export function getDb(): Database.Database {
       close  REAL,
       PRIMARY KEY (symbol, ts)
     );
+    CREATE TABLE IF NOT EXISTS backtest_runs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at  INTEGER NOT NULL,
+      label       TEXT,
+      symbol      TEXT    NOT NULL,
+      start       TEXT    NOT NULL,
+      end         TEXT    NOT NULL,
+      width_pct   REAL,
+      num_grids   INTEGER NOT NULL,
+      investment  REAL    NOT NULL,
+      fee_rate    REAL    NOT NULL,
+      slippage    REAL,
+      realized_apy REAL,
+      total_apy    REAL,
+      pnl          REAL,
+      total_pnl    REAL,
+      trades       INTEGER,
+      result_json  TEXT    NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_created ON backtest_runs(created_at);
   `);
   _db = db;
   return db;
@@ -76,4 +96,60 @@ export function listSymbols(): SymbolInfo[] {
 
 export function deleteSymbol(symbol: string): void {
   getDb().prepare('DELETE FROM candles WHERE symbol = ?').run(symbol);
+}
+
+// Persist a backtest run. Summary columns are derived from the result; the full
+// BacktestResult (including daily snapshots) is stored as the result_json blob.
+// Returns the new row id.
+export function saveBacktestRun(input: SaveBacktestRunInput): number {
+  const r = input.result;
+  const info = getDb().prepare(`
+    INSERT INTO backtest_runs
+      (created_at, label, symbol, start, end, width_pct, num_grids, investment,
+       fee_rate, slippage, realized_apy, total_apy, pnl, total_pnl, trades, result_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Math.floor(Date.now() / 1000),
+    input.label ?? null,
+    input.symbol,
+    input.start,
+    input.end,
+    input.widthPct ?? null,
+    input.numGrids,
+    input.investment,
+    input.feeRate,
+    input.slippage ?? null,
+    r.apy,
+    r.totalApy,
+    r.pnl,
+    r.totalPnl,
+    r.trades,
+    JSON.stringify(r),
+  );
+  return Number(info.lastInsertRowid);
+}
+
+// List saved runs newest-first, without the heavy result_json blob.
+export function listBacktestRuns(): BacktestRunSummary[] {
+  return getDb()
+    .prepare(`
+      SELECT id, created_at, label, symbol, start, end, width_pct, num_grids,
+             investment, fee_rate, slippage, realized_apy, total_apy, pnl, total_pnl, trades
+      FROM backtest_runs ORDER BY created_at DESC, id DESC
+    `)
+    .all() as BacktestRunSummary[];
+}
+
+// Load one saved run in full, parsing result_json back into a BacktestResult.
+export function getBacktestRun(id: number): SavedBacktestRun | null {
+  const row = getDb()
+    .prepare('SELECT * FROM backtest_runs WHERE id = ?')
+    .get(id) as (BacktestRunSummary & { result_json: string }) | undefined;
+  if (!row) return null;
+  const { result_json, ...summary } = row;
+  return { ...summary, result: JSON.parse(result_json) };
+}
+
+export function deleteBacktestRun(id: number): void {
+  getDb().prepare('DELETE FROM backtest_runs WHERE id = ?').run(id);
 }

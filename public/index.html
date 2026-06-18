@@ -108,11 +108,15 @@
 
 <header>
   <h1 id="dashTitle">Grid Trading Simulation</h1>
-  <span id="ts"></span>
+  <div style="display:flex; align-items:center; gap:16px;">
+    <span id="ts"></span>
+    <button id="logoutBtn" onclick="logout()" style="background:none; border:1px solid #334155; color:#cbd5e1; padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer;">Logout</button>
+  </div>
 </header>
 
 <nav class="tab-nav">
   <button class="tab-btn tab-active" id="tabDashboard" onclick="switchTab('dashboard')">Dashboard</button>
+  <button class="tab-btn" id="tabHistory" onclick="switchTab('history')">History</button>
   <button class="tab-btn" id="tabFiles" onclick="switchTab('files')">Data Files</button>
 </nav>
 
@@ -124,6 +128,7 @@
       <select id="asset"></select>
     </div>
     <div class="field"><label>Trading Fee (%)</label><input type="number" id="feeRate" step="0.01"></div>
+    <div class="field"><label>Slippage (% per side)</label><input type="number" id="slippage" step="0.01"></div>
 
     <div class="section-title">Backtest Period</div>
     <div class="field"><label>Start</label><input type="date" id="bt-start"></div>
@@ -172,14 +177,20 @@
 let charts = {};
 let currentTab = 'dashboard';
 
+function logout() {
+  fetch('/api/logout', { method: 'POST' }).finally(() => { location.href = '/login.html'; });
+}
+
 function switchTab(tab) {
   currentTab = tab;
   document.getElementById('tabDashboard').className = 'tab-btn' + (tab === 'dashboard' ? ' tab-active' : '');
+  document.getElementById('tabHistory').className   = 'tab-btn' + (tab === 'history'   ? ' tab-active' : '');
   document.getElementById('tabFiles').className     = 'tab-btn' + (tab === 'files'     ? ' tab-active' : '');
   const layout = document.getElementById('layout');
-  if (tab === 'files') {
+  if (tab === 'files' || tab === 'history') {
     layout.classList.add('files-view');
-    renderFilesPage();
+    if (tab === 'history') renderHistoryPage();
+    else renderFilesPage();
   } else {
     layout.classList.remove('files-view');
     if (_dashData) renderDashboard(_dashData);
@@ -552,6 +563,7 @@ async function loadConfig() {
   sel.onchange = updateAssetUI;
   updateAssetUI();
   document.getElementById('feeRate').value = (c.feeRate * 100).toFixed(2);
+  document.getElementById('slippage').value = ((c.slippage ?? 0) * 100).toFixed(3);
   document.getElementById('bt-start').value     = c.backtest.period.start ?? '';
   document.getElementById('bt-end').value       = c.backtest.period.end   ?? '';
   document.getElementById('widthPct').value     = (c.backtest.auto?.widthPct ?? 100) / 2;
@@ -566,6 +578,7 @@ async function loadConfig() {
 
 function buildConfig(base) {
   base.feeRate    = +document.getElementById('feeRate').value / 100;
+  base.slippage   = +document.getElementById('slippage').value / 100;
   base.backtest.period.start = document.getElementById('bt-start').value;
   base.backtest.period.end   = document.getElementById('bt-end').value;
   if (base.backtest.auto) {
@@ -607,6 +620,93 @@ async function runAll() {
   btn.disabled = false; btn.textContent = '▶ Run';
 }
 
+// ── Save / history ──────────────────────────────────────────────────────────
+async function saveRun() {
+  if (!_dashData || !_dashData.backtest) { alert('Run a backtest first'); return; }
+  const label = prompt('Label for this run (optional):', '');
+  if (label === null) return;  // cancelled
+  const payload = {
+    asset:      _dashData.asset,
+    label:      label || null,
+    start:      document.getElementById('bt-start').value,
+    end:        document.getElementById('bt-end').value,
+    widthPct:   +document.getElementById('widthPct').value,   // ±% as shown in UI
+    investment: _dashData.investment,
+    backtest:   _dashData.backtest,
+  };
+  try {
+    const res = await fetch('/api/runs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).then(r => r.json());
+    if (res.error) throw new Error(res.error);
+    alert('Saved run #' + res.id);
+  } catch(e) { alert('Save failed: ' + e.message); }
+}
+
+async function renderHistoryPage() {
+  const main = document.getElementById('main');
+  main.innerHTML = '<div class="status"><div class="spinner"></div></div>';
+  let runs;
+  try { runs = await fetch('/api/runs').then(r => r.json()); }
+  catch(e) { main.innerHTML = `<div class="error-box">Failed to load runs: ${e.message}</div>`; return; }
+  if (!runs.length) {
+    main.innerHTML = '<div class="card"><h3>Saved Backtest Runs</h3><p style="color:#94a3b8;font-size:13px">No saved runs yet. Run a backtest on the Dashboard and click 💾 Save run.</p></div>';
+    return;
+  }
+  const fmtDate = ts => new Date(ts * 1000).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  const rows = runs.map(r => `
+    <tr style="border-top:1px solid #f1f5f9">
+      <td style="padding:8px 10px;font-size:12px;color:#64748b">${fmtDate(r.created_at)}</td>
+      <td style="padding:8px 10px;font-weight:600">${r.symbol}${r.label ? `<div style="font-size:11px;color:#94a3b8;font-weight:400">${r.label}</div>` : ''}</td>
+      <td style="padding:8px 10px;font-size:12px">${r.start} → ${r.end}</td>
+      <td style="padding:8px 10px;font-size:12px">${r.width_pct != null ? '±' + r.width_pct + '% · ' : ''}${r.num_grids} grids</td>
+      <td style="padding:8px 10px;font-weight:600;color:#10b981">${r.realized_apy}%</td>
+      <td style="padding:8px 10px;font-weight:600;color:${r.total_apy >= 0 ? '#10b981' : '#ef4444'}">${r.total_apy}%</td>
+      <td style="padding:8px 10px;text-align:right;white-space:nowrap">
+        <button onclick="loadRun(${r.id})" style="background:#0f172a;color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer">Load</button>
+        <button onclick="deleteRun(${r.id},event)" style="background:none;border:1px solid #e2e8f0;color:#ef4444;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px">Delete</button>
+      </td>
+    </tr>`).join('');
+  main.innerHTML = `
+    <div class="card">
+      <h3>Saved Backtest Runs</h3>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="text-align:left;font-size:11px;color:#94a3b8;text-transform:uppercase">
+          <th style="padding:8px 10px">Saved</th><th style="padding:8px 10px">Asset</th><th style="padding:8px 10px">Period</th><th style="padding:8px 10px">Grid</th><th style="padding:8px 10px">Realized</th><th style="padding:8px 10px">Total</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function loadRun(id) {
+  try {
+    const run = await fetch('/api/runs/' + id).then(r => r.json());
+    if (run.error) throw new Error(run.error);
+    _dashData = {
+      asset:      run.symbol,
+      quote:      run.symbol.split('/')[1] || 'THB',
+      backtest:   run.result,
+      investment: run.investment,
+      autoGridParams: { minPrice: run.result.minPrice, maxPrice: run.result.maxPrice, numGrids: run.result.numGrids },
+      scenarios:  [],            // backtest only — triggers hasSim=false guard
+      start:      run.start,
+      end:        run.end,
+      widthPct:   run.width_pct,
+      label:      run.label,
+      _fromHistory: true,
+    };
+    switchTab('dashboard');
+  } catch(e) { alert('Load failed: ' + e.message); }
+}
+
+async function deleteRun(id, ev) {
+  if (ev) ev.stopPropagation();
+  if (!confirm('Delete run #' + id + '?')) return;
+  try {
+    await fetch('/api/runs/' + id, { method:'DELETE' });
+    renderHistoryPage();
+  } catch(e) { alert('Delete failed: ' + e.message); }
+}
+
 const fmt = n => Math.round(n).toLocaleString('en-US');
 const fmtPrice = n => {
   if (n >= 1000) return Math.round(n).toLocaleString('en-US');
@@ -620,6 +720,12 @@ function renderDashboard(data) {
   _dashData = data;
   const bt  = data.backtest;
   const Q   = data.quote || 'THB';
+  // History-loaded runs carry their own period/width and have no simulation;
+  // live runs fall back to the sidebar inputs and always include scenarios.
+  const btStart     = data.start    ?? document.getElementById('bt-start').value;
+  const btEnd       = data.end      ?? document.getElementById('bt-end').value;
+  const widthPctVal = data.widthPct ?? document.getElementById('widthPct').value;
+  const hasSim      = Array.isArray(data.scenarios) && data.scenarios.length > 0;
   const maxP = Math.max(...bt.snapshots.map(s => s.price));
   const [pDiv, pSuffix] = maxP >= 1e6 ? [1e6, 'M'] : maxP >= 1e3 ? [1e3, 'K'] : [1, ''];
   const priceDecimals = maxP >= 1e6 ? 1 : maxP >= 1000 ? 0 : maxP >= 1 ? 2 : 4;
@@ -628,24 +734,25 @@ function renderDashboard(data) {
   charts = {};
 
   const autoNote = data.autoGridParams
-    ? ` <small style="color:#3b82f6">(auto ±${document.getElementById('widthPct').value}%)</small>` : '';
+    ? ` <small style="color:#3b82f6">(auto ±${widthPctVal}%)</small>` : '';
   document.getElementById('dashTitle').textContent = `Grid Trading Simulation — ${data.asset}`;
 
   document.getElementById('main').innerHTML = `
     <!-- Backtest Section -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <span style="background:#0f172a;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Backtest</span>
-      <span style="font-size:12px;color:#94a3b8">${document.getElementById('bt-start').value} → ${document.getElementById('bt-end').value} · Historical data</span>
+      <span style="font-size:12px;color:#94a3b8">${btStart} → ${btEnd} · Historical data${data._fromHistory ? (data.label ? ` · saved: ${data.label}` : ' · saved run') : ''}</span>
+      ${data._fromHistory ? '' : '<button onclick="saveRun()" style="margin-left:auto;background:#0f172a;color:#fff;border:none;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">💾 Save run</button>'}
     </div>
     <div class="kpi-row">
-      <div class="kpi"><div class="label">Realized APY</div><div class="value green">${bt.apy}%</div><div class="sub">Profit ${fmt(bt.pnl)} ${Q}</div></div>
-      <div class="kpi"><div class="label">Total APY (incl. Unrealized)</div><div class="value ${bt.totalApy >= 0 ? 'green' : 'red'}">${bt.totalApy}%</div><div class="sub">Unrealized ${bt.unrealized >= 0 ? '+' : ''}${fmt(bt.unrealized)} ${Q} · Total ${fmt(bt.totalPnl)} ${Q}</div></div>
-      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmtPrice(bt.minPrice)} – ${fmtPrice(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmtPrice(bt.spacing)} ${Q} · first price ${fmtPrice(bt.firstPrice)} ${Q}</div></div>
+      <div class="kpi"><div class="label">Realized APY</div><div class="value green">${bt.apy}%</div><div class="sub">Profit ${fmt(bt.pnl)} ${Q} · raw ${(bt.pnl / bt.investment * 100).toFixed(2)}%</div></div>
+      <div class="kpi"><div class="label">Total APY (incl. Unrealized)</div><div class="value ${bt.totalApy >= 0 ? 'green' : 'red'}">${bt.totalApy}%</div><div class="sub">Unrealized ${bt.unrealized >= 0 ? '+' : ''}${fmt(bt.unrealized)} ${Q} · Total ${fmt(bt.totalPnl)} ${Q} · raw ${bt.totalReturnPct >= 0 ? '+' : ''}${bt.totalReturnPct}%</div></div>
+      <div class="kpi"><div class="label">Price Range${autoNote}</div><div class="value" style="font-size:15px">${fmtPrice(bt.minPrice)} – ${fmtPrice(bt.maxPrice)}</div><div class="sub">${bt.numGrids} grids · spacing ${fmtPrice(bt.spacing)} ${Q} · first match ${fmtPrice(bt.firstMatchPrice)} ${Q}</div></div>
     </div>
     <div class="kpi-row">
       <div class="kpi"><div class="label">Trading Volume</div><div class="value" style="font-size:18px">${fmt(bt.volume)} ${Q}</div><div class="sub">${(bt.volume / bt.investment).toFixed(1)}× capital turnover · ${fmt(bt.volume / (bt.trades / 2))} ${Q}/round trip avg</div></div>
       <div class="kpi"><div class="label">Trades</div><div class="value">${bt.trades}</div><div class="sub">${bt.trades/2} round trips · fees ${fmt(bt.fees)} ${Q}</div></div>
-      <div class="kpi"><div class="label">Fee Rate</div><div class="value" style="font-size:18px">${(bt.feeRate*100).toFixed(2)}%</div><div class="sub">Profit/round trip ${bt.profitPerRoundTrip}%</div></div>
+      <div class="kpi"><div class="label">Fee Rate</div><div class="value" style="font-size:18px">${(bt.feeRate*100).toFixed(2)}%</div><div class="sub">slippage ${((bt.slippage ?? 0)*100).toFixed(3)}% · profit/round trip ${bt.profitPerRoundTrip}%</div></div>
     </div>
 
     <!-- Chart 1: Cumulative Returns -->
@@ -659,6 +766,7 @@ function renderDashboard(data) {
       <div style="position:relative;height:280px"><canvas id="chartReturns"></canvas></div>
     </div>
 
+    ${hasSim ? `
     <!-- Simulation Section -->
     <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
       <span style="background:#1e40af;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Monte Carlo Simulation</span>
@@ -704,11 +812,12 @@ function renderDashboard(data) {
       </div>
       <div class="rec-grid" id="recGrid" style="margin-top:16px"></div>
     </div>
+    ` : ''}
   `;
 
   // ── Chart 1: Cumulative returns ──────────────────────────────────────────
   const snaps  = bt.snapshots;
-  const labels = snaps.map(s => s.date.slice(5));
+  const labels = snaps.map(s => s.date.slice(5).split('-').reverse().join('-'));
   const ctx1   = document.getElementById('chartReturns').getContext('2d');
   charts.returns = new Chart(ctx1, {
     type: 'line',
@@ -753,6 +862,7 @@ function renderDashboard(data) {
   });
 
   // ── Build scenario tabs ──────────────────────────────────────────────────
+  if (!hasSim) return;   // history-loaded run: backtest only, no simulation section
   const tabsEl = document.getElementById('scenarioTabs');
   data.scenarios.forEach((sc, i) => {
     const btn = document.createElement('button');
