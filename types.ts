@@ -13,7 +13,10 @@ export interface GridParams {
   investment: number;
   feeRate?: number;
   slippage?: number;   // per-side execution slippage, e.g. 0.0005 = 0.05%
+  skipSnapshots?: boolean;   // skip daily snapshot building — used by Monte Carlo where snapshots are discarded
 }
+
+export type BacktestModel = 'crossing' | 'external';
 
 export interface WeeklySnapshot {
   date: string;
@@ -23,6 +26,7 @@ export interface WeeklySnapshot {
 }
 
 export interface BacktestResult extends GridParams {
+  model: BacktestModel;   // which fill model produced this result
   feeRate: number;
   firstPrice: number;
   firstMatchPrice: number;   // grid line price of the first executed trade
@@ -30,6 +34,8 @@ export interface BacktestResult extends GridParams {
   fees: number;
   trades: number;
   volume: number;
+  buyVolume?: number;    // gross buy notional (Σ qty·buyPrice)
+  sellVolume?: number;   // gross sell notional (Σ qty·sellPrice)
   apy: number;
   unrealized: number;
   totalPnl: number;
@@ -134,7 +140,9 @@ export interface Recommendation {
 }
 
 export interface AutoGridConfig {
-  widthPct: number;             // total range width as % of first price, e.g. 100 = ±50%
+  widthPct: number;             // total range width as % of first price, e.g. 100 = ±50% (fallback when downPct/upPct absent)
+  downPct?: number;             // downward range as % below first price (positive, e.g. 50 = -50%); falls back to widthPct/2
+  upPct?: number;               // upward range as % above first price (e.g. 100 = +100%); falls back to widthPct/2
   numGridsOptions: number[];    // sweep ทุกตัว เลือก numGrids ที่ APY สูงสุด
   numGrids?: number;            // ถ้าระบุ → ใช้ค่านี้เลย ไม่ sweep
   // roundTo: auto-calculated from price magnitude (no need to set manually)

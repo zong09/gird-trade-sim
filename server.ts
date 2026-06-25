@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import path    from 'path';
 import fs      from 'fs';
+import os      from 'os';
 import multer  from 'multer';
 import { Config, AssetConfig, Asset }                    from './types';
 import { loadCandles, parseCandleData, parseCsvData, validateCandles } from './loader';
@@ -68,51 +70,141 @@ app.get('/api/config', (_req, res) => {
   res.json({ ...readConfig(), version: pkgVersion });
 });
 
+// System CPU usage: snapshot os.cpus() times, diff against the previous
+// snapshot so each poll reports the busy% over the interval between polls.
+let prevCpu = os.cpus().map(c => ({ ...c.times }));
+function systemCpuPercent(): number {
+  const now = os.cpus().map(c => ({ ...c.times }));
+  let idleDiff = 0, totalDiff = 0;
+  for (let i = 0; i < now.length; i++) {
+    const a = prevCpu[i], b = now[i];
+    const aTotal = a.user + a.nice + a.sys + a.idle + a.irq;
+    const bTotal = b.user + b.nice + b.sys + b.idle + b.irq;
+    idleDiff  += b.idle - a.idle;
+    totalDiff += bTotal - aTotal;
+  }
+  prevCpu = now;
+  if (totalDiff <= 0) return 0;
+  return Math.max(0, Math.min(100, (1 - idleDiff / totalDiff) * 100));
+}
+
+app.get('/api/sysmetrics', (_req, res) => {
+  const totalMem = os.totalmem();
+  const freeMem  = os.freemem();
+  const usedMem  = totalMem - freeMem;
+  const mem      = process.memoryUsage();
+  res.json({
+    cpu: {
+      systemPercent: Math.round(systemCpuPercent() * 10) / 10,
+      cores: os.cpus().length,
+      loadAvg: os.loadavg(),
+    },
+    mem: {
+      totalBytes: totalMem,
+      usedBytes: usedMem,
+      freeBytes: freeMem,
+      usedPercent: Math.round((usedMem / totalMem) * 1000) / 10,
+      processRssBytes: mem.rss,
+      processHeapUsedBytes: mem.heapUsed,
+    },
+    uptimeSec: Math.round(process.uptime()),
+    ts: Date.now(),
+  });
+});
+
+// Thrown when the requested asset isn't in the config — mapped to HTTP 400.
+class AssetNotFoundError extends Error {}
+
+// Run a full backtest + Monte Carlo simulation for one asset.
+// onProgress reports phase milestones so callers can stream progress (SSE).
+async function executeRun(
+  cfg: Config,
+  assetName: string,
+  onProgress?: (info: { phase: 'backtest' | 'sim'; label?: string; done: number; total: number; overallDone: number; overallTotal: number }) => void,
+) {
+  const asset = cfg.assets.find(a => a.name === assetName);
+  if (!asset) throw new AssetNotFoundError(`Asset "${assetName}" not found`);
+
+  // Backtest
+  const investment = cfg.simulation.investment ?? DEFAULT_INVESTMENT;
+  const btCandles  = loadCandles(assetName, cfg.backtest.period);
+  const gridParams = cfg.backtest.auto
+    ? resolveGridParams(btCandles, cfg.backtest.auto, investment, cfg.feeRate, cfg.slippage)
+    : { minPrice: cfg.backtest.minPrice!, maxPrice: cfg.backtest.maxPrice!, numGrids: cfg.backtest.numGrids! };
+  const btStart = Date.now();
+  const bt = runBacktest(btCandles, { ...gridParams, investment, feeRate: cfg.feeRate, slippage: cfg.slippage });
+  console.log(`[run] asset=${assetName} model=${bt.model} backtest ${Date.now() - btStart}ms`);
+
+  // Simulation — auto-generate paramSets from training data
+  const sim       = cfg.simulation;
+  const simData = loadCandles(assetName, sim.trainingPeriod ?? {});
+  const opts    = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
+  const scenarios = (sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }]);
+
+  // Generate paramSets up front so we know the total sim-step count for overall progress %.
+  const scenarioParams = scenarios.map(sc => ({ sc, paramSets: autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift) }));
+  const overallTotal   = scenarioParams.reduce((n, x) => n + x.paramSets.length, 0);
+  onProgress?.({ phase: 'backtest', done: 1, total: 1, overallDone: 0, overallTotal });
+
+  const scenarioResults = [];
+  let simDone = 0;
+  const simStart = Date.now();
+  for (const { sc, paramSets } of scenarioParams) {
+    const simResults = await runMonteCarlo({
+      candles: simData, paramSets,
+      investment, feeRate: cfg.feeRate, slippage: cfg.slippage,
+      numSims: sim.numSims, hoursAhead: sim.hoursAhead,
+      blockSize: sim.blockSize, seed: sim.seed,
+      annualDrift: sc.annualDrift,
+      onProgress: (done, total) => onProgress?.({ phase: 'sim', label: sc.label, done, total, overallDone: simDone + done, overallTotal }),
+    });
+    simDone += paramSets.length;
+    const recs = (['balanced', 'safe', 'aggressive'] as const)
+      .map(s => getRecommendation(simResults, { ...opts, strategy: s }));
+    scenarioResults.push({ label: sc.label, annualDrift: sc.annualDrift, simulation: simResults, recommendations: recs });
+  }
+  console.log(`[run] asset=${assetName} simulation ${Date.now() - simStart}ms (${scenarios.length} scenarios, ${overallTotal} paramSets)`);
+
+  const quote    = assetName.split('/')[1] ?? 'THB';
+  const refPrice = simData.length > 0 ? simData[simData.length - 1].close : null;
+  return { asset: assetName, quote, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults, refPrice, investment };
+}
+
 // POST /api/run  body: { asset: "BTC", config?: Config }
 // config overrides come from the UI form for this run only — never persisted
+// Note: blocking JSON variant — can exceed Cloudflare's 100s timeout. UI uses /api/run/stream.
 app.post('/api/run', async (req, res) => {
   try {
-    const cfg = (req.body?.config as Config | undefined)
-      ?? readConfig();
+    const cfg = (req.body?.config as Config | undefined) ?? readConfig();
     const assetName = (req.body?.asset as string) || cfg.assets[0].name;
-    const asset     = cfg.assets.find(a => a.name === assetName);
-    if (!asset) return res.status(400).json({ error: `Asset "${assetName}" not found` });
-
-    // Backtest
-    const investment = cfg.simulation.investment ?? DEFAULT_INVESTMENT;
-    const btCandles  = loadCandles(assetName, cfg.backtest.period);
-    const gridParams = cfg.backtest.auto
-      ? resolveGridParams(btCandles, cfg.backtest.auto, investment, cfg.feeRate, cfg.slippage)
-      : { minPrice: cfg.backtest.minPrice!, maxPrice: cfg.backtest.maxPrice!, numGrids: cfg.backtest.numGrids! };
-    const bt = runBacktest(btCandles, { ...gridParams, investment, feeRate: cfg.feeRate, slippage: cfg.slippage });
-
-    // Simulation — auto-generate paramSets from training data
-    const sim       = cfg.simulation;
-    const simData = loadCandles(assetName, sim.trainingPeriod ?? {});
-    const opts    = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
-    const scenarios = (sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }]);
-
-    const scenarioResults = scenarios.map(sc => {
-      const paramSets  = autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift);
-      const simResults = runMonteCarlo({
-        candles: simData, paramSets,
-        investment, feeRate: cfg.feeRate, slippage: cfg.slippage,
-        numSims: sim.numSims, hoursAhead: sim.hoursAhead,
-        blockSize: sim.blockSize, seed: sim.seed,
-        annualDrift: sc.annualDrift,
-      });
-      const recs = (['balanced', 'safe', 'aggressive'] as const)
-        .map(s => getRecommendation(simResults, { ...opts, strategy: s }));
-      return { label: sc.label, annualDrift: sc.annualDrift, simulation: simResults, recommendations: recs };
-    });
-
-    const quote    = assetName.split('/')[1] ?? 'THB';
-    const refPrice = simData.length > 0 ? simData[simData.length - 1].close : null;
-    const output = { asset: assetName, quote, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults, refPrice, investment };
+    const output = await executeRun(cfg, assetName);
     res.json(output);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error(`[/api/run] asset=${req.body?.asset ?? 'unknown'} error:`, e);
+    const status = e instanceof AssetNotFoundError ? 400 : 500;
+    res.status(status).json({ error: e.message });
   }
+});
+
+// POST /api/run/stream  body: { asset, config? }  → Server-Sent Events
+// Streams progress so a >100s run never idles past Cloudflare's 100s origin timeout (524).
+app.post('/api/run/stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const send = (event: string, data: any) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // Flush headers + a first event immediately so the origin response is established < 100s.
+  send('start', { ts: Date.now() });
+  try {
+    const cfg = (req.body?.config as Config | undefined) ?? readConfig();
+    const assetName = (req.body?.asset as string) || cfg.assets[0].name;
+    const output = await executeRun(cfg, assetName, info => send('progress', info));
+    send('done', output);
+  } catch (e: any) {
+    console.error(`[/api/run/stream] asset=${req.body?.asset ?? 'unknown'} error:`, e);
+    send('error', { message: e.message });
+  }
+  res.end();
 });
 
 // Save a backtest run (backtest result only — no simulation).

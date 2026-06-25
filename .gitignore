@@ -19,3 +19,7 @@ output*.json
 Thumbs.db
 
 .vscode
+
+cert/
+deploy.sh
+docs/

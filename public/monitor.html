@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Monitor · Grid Trading Simulation</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #f1f5f9; color: #0f172a; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 16px 24px; background: #fff; border-bottom: 1px solid #e2e8f0; }
+  header h1 { font-size: 16px; margin: 0; }
+  header a { font-size: 13px; color: #3b82f6; text-decoration: none; }
+  .wrap { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
+  .card .label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+  .card .val { font-size: 24px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .chartbox { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .chartbox h2 { font-size: 13px; margin: 0 0 12px; color: #334155; font-weight: 600; }
+  .chartbox .c { position: relative; height: 260px; }
+  .status { font-size: 11px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>System Monitor</h1>
+  <a href="/">&larr; Back to dashboard</a>
+</header>
+
+<div class="wrap">
+  <div class="cards">
+    <div class="card"><div class="label">CPU</div><div class="val" id="cpuVal">—</div><div class="sub" id="cpuSub">—</div></div>
+    <div class="card"><div class="label">RAM</div><div class="val" id="memVal">—</div><div class="sub" id="memSub">—</div></div>
+    <div class="card"><div class="label">Process RSS</div><div class="val" id="rssVal">—</div><div class="sub" id="heapSub">—</div></div>
+    <div class="card"><div class="label">Uptime</div><div class="val" id="upVal">—</div><div class="sub status" id="upSub">polling every 2s</div></div>
+  </div>
+
+  <div class="chartbox">
+    <h2>CPU usage (%)</h2>
+    <div class="c"><canvas id="cpuChart"></canvas></div>
+  </div>
+
+  <div class="chartbox">
+    <h2>Memory usage (%)</h2>
+    <div class="c"><canvas id="memChart"></canvas></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var WINDOW_MS = 5 * 60 * 1000; // 5 min rolling window
+  var POLL_MS   = 2000;
+
+  function fmtTime(ms){
+    return new Date(ms).toLocaleTimeString([], { hour12: false });
+  }
+
+  function fmtBytes(b){
+    var u=['B','KB','MB','GB','TB']; var i=0;
+    while(b>=1024 && i<u.length-1){ b/=1024; i++; }
+    return b.toFixed(b<10 && i>0 ? 1 : 0)+' '+u[i];
+  }
+  function fmtUptime(s){
+    var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+    if(h>0) return h+'h '+m+'m';
+    if(m>0) return m+'m '+sec+'s';
+    return sec+'s';
+  }
+
+  function lineChart(ctx, color){
+    return new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [{
+        data: [], borderColor: color, backgroundColor: color+'22',
+        borderWidth: 2, pointRadius: 0, fill: true, tension: .3,
+      }]},
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        parsing: false,
+        scales: {
+          y: { min: 0, max: 100, ticks: { callback: function(v){ return v+'%'; } } },
+          x: {
+            type: 'linear',
+            ticks: {
+              maxTicksLimit: 8, autoSkip: true,
+              callback: function(v){ return fmtTime(v); },
+            },
+          },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }
+
+  var cpuChart = lineChart(document.getElementById('cpuChart').getContext('2d'), '#3b82f6');
+  var memChart = lineChart(document.getElementById('memChart').getContext('2d'), '#10b981');
+
+  // Plot against a fixed 5-min time window: the x-axis always spans
+  // [now-5min, now] so the chart reads as 5 minutes immediately, and
+  // points older than the window are dropped (time-based, not count-based).
+  function push(chart, ts, val){
+    var data = chart.data.datasets[0].data;
+    data.push({ x: ts, y: val });
+    var cutoff = ts - WINDOW_MS;
+    while(data.length && data[0].x < cutoff) data.shift();
+    chart.options.scales.x.min = cutoff;
+    chart.options.scales.x.max = ts;
+    chart.update();
+  }
+
+  async function poll(){
+    var r = await fetch('/api/sysmetrics');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    var d = await r.json();
+
+    document.getElementById('cpuVal').textContent = d.cpu.systemPercent.toFixed(1)+'%';
+    document.getElementById('cpuSub').textContent = d.cpu.cores+' cores · load '+d.cpu.loadAvg.map(function(x){return x.toFixed(2);}).join(' / ');
+    document.getElementById('memVal').textContent = d.mem.usedPercent.toFixed(1)+'%';
+    document.getElementById('memSub').textContent = fmtBytes(d.mem.usedBytes)+' / '+fmtBytes(d.mem.totalBytes);
+    document.getElementById('rssVal').textContent = fmtBytes(d.mem.processRssBytes);
+    document.getElementById('heapSub').textContent = 'heap '+fmtBytes(d.mem.processHeapUsedBytes);
+    document.getElementById('upVal').textContent = fmtUptime(d.uptimeSec);
+
+    push(cpuChart, d.ts, d.cpu.systemPercent);
+    push(memChart, d.ts, d.mem.usedPercent);
+  }
+
+  async function tick(){
+    try { await poll(); document.getElementById('upSub').textContent = 'polling every 2s'; }
+    catch(e){ document.getElementById('upSub').textContent = 'poll failed: '+e.message; console.error('sysmetrics poll failed', e); }
+  }
+
+  tick();
+  setInterval(tick, POLL_MS);
+})();
+</script>
+</body>
+</html>

@@ -1,6 +1,20 @@
-import { Candle, GridParams, BacktestResult, AutoGridConfig, WeeklySnapshot } from './types';
+import { Candle, GridParams, BacktestResult, AutoGridConfig, WeeklySnapshot, BacktestModel } from './types';
+import { runBacktestExternal } from './engine-external';
 
 const DAY = 24 * 3600;
+
+// Which fill model to use. `external` (touch-based, wallet-gated — ports grid_engine.py) is the
+// default; set BACKTEST_MODEL=crossing for the original crossing-based model.
+export function backtestModel(): BacktestModel {
+  return process.env.BACKTEST_MODEL === 'crossing' ? 'crossing' : 'external';
+}
+
+// Dispatcher — all callers use this; the active model is chosen by BACKTEST_MODEL.
+export function runBacktest(candles: Candle[], params: GridParams): BacktestResult {
+  return backtestModel() === 'external'
+    ? runBacktestExternal(candles, params)
+    : runBacktestCrossing(candles, params);
+}
 
 export function resolveGridParams(
   candles: Candle[],
@@ -9,31 +23,31 @@ export function resolveGridParams(
   feeRate = 0.0025,
   slippage = 0,
 ): { minPrice: number; maxPrice: number; numGrids: number } {
-  const { widthPct, numGridsOptions, numGrids: fixedGrids } = auto;
+  const { widthPct, downPct, upPct, numGridsOptions, numGrids: fixedGrids } = auto;
 
   // Use first candle open price — no look-ahead bias
   const firstPrice = candles[0].open;
-  const half    = widthPct / 2 / 100;
-  // Auto-calculate roundTo from price magnitude (e.g. 3,000,000 → 1,000 | 65,000 → 10)
-  const roundTo = Math.pow(10, Math.floor(Math.log10(firstPrice)) - 3);
-  const round   = (v: number) => Math.round(v / roundTo) * roundTo;
-  const minPrice = round(firstPrice * (1 - half));
-  const maxPrice = round(firstPrice * (1 + half));
+  // Asymmetric range: down/up as % below/above first price. Fall back to symmetric widthPct/2 each side.
+  const down = (downPct ?? widthPct / 2) / 100;
+  const up   = (upPct   ?? widthPct / 2) / 100;
+  // Raw grid range — match grid_engine.py: grid_min/max = open*pct (no rounding).
+  const minPrice = firstPrice * (1 - down);
+  const maxPrice = firstPrice * (1 + up);
 
   // ถ้าระบุ numGrids ตายตัว → ใช้เลย, ไม่งั้น sweep หา APY สูงสุด
   if (fixedGrids) return { minPrice, maxPrice, numGrids: fixedGrids };
 
   const results = numGridsOptions.map(numGrids => ({
     numGrids,
-    apy: runBacktest(candles, { minPrice, maxPrice, numGrids, investment, feeRate, slippage }).apy,
+    apy: runBacktest(candles, { minPrice, maxPrice, numGrids, investment, feeRate, slippage, skipSnapshots: true }).apy,
   }));
   const best = results.sort((a, b) => b.apy - a.apy)[0];
 
   return { minPrice, maxPrice, numGrids: best.numGrids };
 }
 
-export function runBacktest(candles: Candle[], params: GridParams): BacktestResult {
-  const { minPrice, maxPrice, numGrids, investment, feeRate = 0.0025, slippage = 0 } = params;
+export function runBacktestCrossing(candles: Candle[], params: GridParams): BacktestResult {
+  const { minPrice, maxPrice, numGrids, investment, feeRate = 0.0025, slippage = 0, skipSnapshots = false } = params;
 
   const levels = Array.from({ length: numGrids + 1 }, (_, i) =>
     minPrice + (maxPrice - minPrice) * (i / numGrids)
@@ -41,7 +55,7 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
   const cpg = investment / numGrids;
   const pos = levels.slice(0, numGrids).map((_, i) => levels[i + 1] <= candles[0].open);
 
-  let pnl = 0, fees = 0, trades = 0, volume = 0;
+  let pnl = 0, fees = 0, trades = 0, volume = 0, buyVolume = 0, sellVolume = 0;
   let firstMatchPrice = 0;   // grid line price of the first executed trade
   // track avg buy price per grid slot for unrealized P&L calculation
   const buyPrice = levels.slice(0, numGrids).map((_, i) => pos[i] ? levels[i] : 0);
@@ -73,6 +87,7 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
         fees   += fee;
         trades += 2;
         volume += cpg + qty * levels[i + 1];   // buy value + sell value
+        buyVolume += cpg; sellVolume += qty * levels[i + 1];
         pos[i]  = false;
         if (ci > 0 && !firstMatchPrice) firstMatchPrice = levels[i + 1];
       }
@@ -84,9 +99,9 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
       }
     }
     prevRef = close;
-    if (ts - lastSnapTs >= DAY) { lastSnapTs = ts; snap(ts, close); }
+    if (!skipSnapshots && ts - lastSnapTs >= DAY) { lastSnapTs = ts; snap(ts, close); }
   }
-  snap(candles.at(-1)!.ts, candles.at(-1)!.close);
+  if (!skipSnapshots) snap(candles.at(-1)!.ts, candles.at(-1)!.close);
 
   const endPrice = candles.at(-1)!.close;
   // unrealized P&L: for each grid slot still holding stock, mark to end price
@@ -104,6 +119,7 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
   const mid     = (minPrice + maxPrice) / 2;
 
   return {
+    model: 'crossing',
     minPrice, maxPrice, numGrids, investment, feeRate, slippage,
     firstPrice:        +candles[0].open.toFixed(2),
     firstMatchPrice:   +(firstMatchPrice || candles[0].open).toFixed(2),
@@ -111,6 +127,8 @@ export function runBacktest(candles: Candle[], params: GridParams): BacktestResu
     fees:              +fees.toFixed(2),
     trades,
     volume:            +volume.toFixed(2),
+    buyVolume:         +buyVolume.toFixed(2),
+    sellVolume:        +sellVolume.toFixed(2),
     apy:               +(pnl / investment / years * 100).toFixed(2),
     unrealized:        +unrealized.toFixed(2),
     totalPnl:          +totalPnl.toFixed(2),

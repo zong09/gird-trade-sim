@@ -37,6 +37,7 @@ interface MonteCarloOptions {
   blockSize?: number;
   seed?: number;
   annualDrift?: number;  // % เช่น 0 = neutral, 80 = +80%/ปี
+  onProgress?: (done: number, total: number) => void;
 }
 
 interface RecommendationOptions {
@@ -78,7 +79,7 @@ function percentile(sorted: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
 }
 
-export function runMonteCarlo({
+export async function runMonteCarlo({
   candles,
   paramSets,
   investment  = 100_000,
@@ -89,7 +90,8 @@ export function runMonteCarlo({
   blockSize   = 48,
   seed        = 42,
   annualDrift = 0,
-}: MonteCarloOptions): SimResult[] {
+  onProgress,
+}: MonteCarloOptions): Promise<SimResult[]> {
   const hourly = toHourly(candles);
   const closes = hourly.map(c => c.close);
 
@@ -120,12 +122,20 @@ export function runMonteCarlo({
     return { prices, hi, lo };
   });
 
-  return paramSets.map(ps => {
-    const results = paths.map(({ prices, hi, lo }) => {
-      const c: Candle[] = prices.slice(1).map((p, i) => ({
-        ts: i * 3600, open: prices[i], high: p * hi[i], low: p * lo[i], close: p,
-      }));
-      const r = runBacktest(c, { ...ps, investment, feeRate, slippage });
+  // Build candle arrays once per path and reuse across all paramSets.
+  // runBacktest only reads candles (never mutates), and the paths are identical
+  // for every paramSet within a scenario — so rebuilding them per paramSet is wasted work.
+  const pathCandles: Candle[][] = paths.map(({ prices, hi, lo }) =>
+    prices.slice(1).map((p, i) => ({
+      ts: i * 3600, open: prices[i], high: p * hi[i], low: p * lo[i], close: p,
+    }))
+  );
+
+  const out: SimResult[] = [];
+  for (let psi = 0; psi < paramSets.length; psi++) {
+    const ps = paramSets[psi];
+    const results = pathCandles.map(c => {
+      const r = runBacktest(c, { ...ps, investment, feeRate, slippage, skipSnapshots: true });
       return { apy: r.apy, totalApy: r.totalApy, trades: r.trades };
     });
     const apys      = results.map(r => r.apy).sort((a, b) => a - b);
@@ -136,7 +146,7 @@ export function runMonteCarlo({
     const spacing = (ps.maxPrice - ps.minPrice) / ps.numGrids;
     const mid     = (ps.minPrice + ps.maxPrice) / 2;
 
-    return {
+    out.push({
       label:             ps.label ?? `${ps.minPrice / 1e6}M–${ps.maxPrice / 1e6}M g${ps.numGrids}`,
       minPrice:          ps.minPrice,
       maxPrice:          ps.maxPrice,
@@ -155,8 +165,13 @@ export function runMonteCarlo({
       probPositive:      +(apys.filter(v => v >  0).length / apys.length * 100).toFixed(1),
       avgTradesPerYear:  avgTrades,
       profitPerRoundTrip:+(spacing / mid * 100 - feeRate * 2 * 100 - slippage * 2 * 100).toFixed(2),
-    };
-  });
+    });
+
+    onProgress?.(psi + 1, paramSets.length);
+    // Yield so pending SSE writes flush (Node is single-threaded; this loop is CPU-bound)
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  return out;
 }
 
 export function getRecommendation(

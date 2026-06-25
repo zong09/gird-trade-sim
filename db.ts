@@ -54,6 +54,17 @@ export function getDb(): Database.Database {
       result_json  TEXT    NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_runs_created ON backtest_runs(created_at);
+    -- Maintained row-count cache per symbol. A full COUNT(*) GROUP BY over the
+    -- candles table scans every row (seconds on large DBs); this table lets
+    -- listSymbols return instantly. Kept in sync by insertCandles/deleteSymbol.
+    CREATE TABLE IF NOT EXISTS candle_stats (
+      symbol TEXT PRIMARY KEY,
+      rows   INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   _db = db;
   return db;
@@ -63,39 +74,75 @@ export function getDb(): Database.Database {
 // Returns number of rows actually inserted.
 export function insertCandles(symbol: string, candles: Candle[]): number {
   const db   = getDb();
+  ensureStats(symbol);
   const stmt = db.prepare(
     'INSERT OR IGNORE INTO candles (symbol, ts, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)'
   );
-  const before = countRows(symbol);
+  let inserted = 0;
   const tx = db.transaction((rows: Candle[]) => {
-    for (const c of rows) stmt.run(symbol, c.ts, c.open, c.high, c.low, c.close);
+    // INSERT OR IGNORE reports changes=1 only when a new row is actually added.
+    for (const c of rows) inserted += stmt.run(symbol, c.ts, c.open, c.high, c.low, c.close).changes;
   });
   tx(candles);
-  return countRows(symbol) - before;
+  db.prepare('UPDATE candle_stats SET rows = rows + ? WHERE symbol = ?').run(inserted, symbol);
+  return inserted;
 }
 
-function countRows(symbol: string): number {
-  const row = getDb().prepare('SELECT COUNT(*) n FROM candles WHERE symbol = ?').get(symbol) as { n: number };
-  return row.n;
+// Make sure candle_stats holds a correct row count for symbol. Seeds the row
+// (one COUNT(*) for legacy symbols, 0 for new ones) so increments can apply.
+function ensureStats(symbol: string): void {
+  const db = getDb();
+  if (db.prepare('SELECT 1 FROM candle_stats WHERE symbol = ?').get(symbol)) return;
+  const n = (db.prepare('SELECT COUNT(*) n FROM candles WHERE symbol = ?').get(symbol) as { n: number }).n;
+  db.prepare('INSERT INTO candle_stats (symbol, rows) VALUES (?, ?)').run(symbol, n);
 }
 
 // Query candles for a symbol within an optional date period (YYYY-MM-DD).
 export function queryCandles(symbol: string, period: Period = {}): Candle[] {
   const startTs = period.start ? Date.parse(period.start) / 1000 : 0;
+  // end is inclusive of the whole end day: include candles with ts < (end + 1 day),
+  // i.e. exclusive upper bound — matches grid_engine.py's `index < end + Timedelta(days=1)`.
   const endTs   = period.end   ? Date.parse(period.end)   / 1000 + 86400 : Number.MAX_SAFE_INTEGER;
   return getDb()
-    .prepare('SELECT ts, open, high, low, close FROM candles WHERE symbol = ? AND ts >= ? AND ts <= ? ORDER BY ts')
+    .prepare('SELECT ts, open, high, low, close FROM candles WHERE symbol = ? AND ts >= ? AND ts < ? ORDER BY ts')
     .all(symbol, startTs, endTs) as Candle[];
 }
 
 export function listSymbols(): SymbolInfo[] {
-  return getDb()
-    .prepare('SELECT symbol, COUNT(*) rows, MIN(ts) first, MAX(ts) last FROM candles GROUP BY symbol ORDER BY symbol')
-    .all() as SymbolInfo[];
+  const db = getDb();
+  backfillStatsOnce();
+  // rows come from the maintained cache; first/last are single index seeks
+  // (PK is (symbol, ts)), each O(log n) — vs MIN/MAX GROUP BY which scans all rows.
+  const first = db.prepare('SELECT ts FROM candles WHERE symbol = ? ORDER BY ts ASC  LIMIT 1');
+  const last  = db.prepare('SELECT ts FROM candles WHERE symbol = ? ORDER BY ts DESC LIMIT 1');
+  return (db.prepare('SELECT symbol, rows FROM candle_stats ORDER BY symbol').all() as { symbol: string; rows: number }[])
+    .map(s => ({
+      symbol: s.symbol,
+      rows:   s.rows,
+      first:  (first.get(s.symbol) as { ts: number } | undefined)?.ts ?? 0,
+      last:   (last.get(s.symbol)  as { ts: number } | undefined)?.ts ?? 0,
+    }));
+}
+
+// One-time population of candle_stats from the existing candles table, for DBs
+// created before the cache existed. Guarded by a meta flag so the full
+// COUNT(*) GROUP BY scan runs at most once per DB; afterwards the cache is kept
+// current incrementally by insertCandles/deleteSymbol.
+function backfillStatsOnce(): void {
+  const db = getDb();
+  if (db.prepare("SELECT 1 FROM meta WHERE key = 'stats_backfilled'").get()) return;
+  const counts = db.prepare('SELECT symbol, COUNT(*) rows FROM candles GROUP BY symbol').all() as { symbol: string; rows: number }[];
+  const ins = db.prepare('INSERT OR REPLACE INTO candle_stats (symbol, rows) VALUES (?, ?)');
+  db.transaction(() => {
+    for (const c of counts) ins.run(c.symbol, c.rows);
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('stats_backfilled', '1')").run();
+  })();
 }
 
 export function deleteSymbol(symbol: string): void {
-  getDb().prepare('DELETE FROM candles WHERE symbol = ?').run(symbol);
+  const db = getDb();
+  db.prepare('DELETE FROM candles WHERE symbol = ?').run(symbol);
+  db.prepare('DELETE FROM candle_stats WHERE symbol = ?').run(symbol);
 }
 
 // Persist a backtest run. Summary columns are derived from the result; the full

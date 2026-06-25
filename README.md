@@ -5,7 +5,11 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 ## Features
 
 - **Backtest** — Run grid trading on historical OHLC data with no look-ahead bias
-- **Crossing-based fills** — Orders fill only on a genuine price crossing: a buy on a downward cross (price was above the level, then dipped to it), a sell on an upward cross. Levels the price never traded through are never filled, so no phantom inventory or fake mark-to-market loss
+- **Two fill models** (chosen at runtime via `BACKTEST_MODEL`):
+  - **`external`** (default, touch-based) — faithful port of `grid_engine.py`: every slot starts empty, a buy fills when the candle range touches a level (`low ≤ level ≤ high`) and cash is available (wallet-gated), a sell fills when `high` reaches the slot's upper level (gap-up fills at open). `numGrids` = number of price *levels*.
+  - **`crossing`** — orders fill only on a genuine price crossing: a buy on a downward cross (price was above the level, then dipped to it), a sell on an upward cross. Levels the price never traded through are never filled, so no phantom inventory or fake mark-to-market loss.
+  - The active model is recorded in `BacktestResult.model`, logged to the server console, and shown in the dashboard footer.
+- **Buy / sell volume breakdown** — Trading Volume reports total notional plus the buy and sell split (`buyVolume` / `sellVolume`); total fees ≈ `feeRate × volume`
 - **Save & replay runs** — Persist a backtest result with the dashboard "Save run" button; the History tab lists saved runs and can reload one (replaying the cards + returns chart) or delete it. Stored in SQLite (`backtest_runs`), backtest only, ~5KB/run
 - **Realized vs Total APY** — Separates closed round-trips from mark-to-market unrealized P&L; both shown in simulation results and recommendation cards
 - **Monte Carlo** — Block bootstrap resampling (configurable simulations, 1-year forward)
@@ -15,13 +19,18 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 - **SQLite candle store** — All candles live in `data/candles.db` (better-sqlite3), keyed by asset name; backtest/sim query only the needed date range instead of parsing whole files
 - **Binance sync** — Search any Binance pair and pull monthly klines from data.binance.vision straight into the DB, with live progress (CLI or a "Sync" button in the dashboard)
 - **Data management** — Upload `.json` or `.csv` (header-aware, e.g. Bitkub), delete assets, drag-and-drop to reorder (controls dropdown order)
-- **Web Dashboard** — Single-page UI with Chart.js, scenario tabs, and recommendation cards
+- **SSE streaming run** — `POST /api/run/stream` streams backtest + simulation progress as Server-Sent Events with a live % progress bar; avoids Cloudflare's 100s origin timeout (524) on long runs
+- **Processing-time logs** — backtest and simulation each log their elapsed time (ms) to the server console / CLI output, so you can spot bottlenecks per run
+- **Fast Monte Carlo** — simulation reuses candle arrays across paramSets and skips per-day snapshot building in the inner backtests (results identical), cutting allocation/GC overhead on CPU-bound runs
+- **Web Dashboard** — Single-page UI with Chart.js, scenario tabs, recommendation cards, and live % progress bar during runs
 
 ## Setup
 
 ```bash
 npm install   # builds better-sqlite3; needs curl + unzip on PATH for Binance sync
 ```
+
+> **Production note**: `ts-node` and all `@types/*` packages are in `dependencies` (not devDependencies) so `npm install --omit=dev` / `npm ci --production` still installs them — the server runs directly from TypeScript source via `npm run server`. Only `typescript` itself stays in devDependencies.
 
 Candles are stored in `data/candles.db` (gitignored). Load data by:
 
@@ -72,7 +81,7 @@ Fields: `[timestamp, open, high, low, close, volume, exchange]`
 
 **Web dashboard**
 ```bash
-npx ts-node server.ts
+npm run server        # preferred (uses pinned ts-node version)
 # → http://localhost:3000
 ```
 

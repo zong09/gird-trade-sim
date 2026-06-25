@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs   from 'fs';
 import path from 'path';
 import { Config, AssetConfig }                                from './types';
@@ -23,11 +24,14 @@ if (assetsToRun.length === 0) {
   process.exit(1);
 }
 
+async function main() {
 for (const asset of assetsToRun) {
   const Q        = asset.name.split('/')[1] ?? 'THB';
   console.log(`\n${'═'.repeat(55)}`);
   console.log(`  Asset: ${asset.name}`);
   console.log('═'.repeat(55));
+
+  try {
 
   // ── Backtest ──────────────────────────────────────────────
   const btCandles  = loadCandles(asset.name, cfg.backtest.period);
@@ -41,11 +45,13 @@ for (const asset of assetsToRun) {
     console.log(`  ${fmt(gridParams.minPrice)} – ${fmt(gridParams.maxPrice)} ${Q}  |  ${gridParams.numGrids} grids`);
   }
 
+  const btStart = Date.now();
   const bt = runBacktest(btCandles, { ...gridParams, investment: BASE_INVESTMENT, feeRate: cfg.feeRate });
-  console.log(`\n── Backtest  ${cfg.backtest.period.start} → ${cfg.backtest.period.end}`);
+  console.log(`\n── Backtest  ${cfg.backtest.period.start} → ${cfg.backtest.period.end}  [model=${bt.model}]`);
   console.log(`  APY     : ${bt.apy}%`);
   console.log(`  Profit  : ${fmt(bt.pnl)} ${Q}  (fees ${fmt(bt.fees)} ${Q})`);
   console.log(`  Trades  : ${bt.trades}`);
+  console.log(`  Time    : ${Date.now() - btStart}ms`);
 
   // ── Simulation ────────────────────────────────────────────
   const sim       = cfg.simulation;
@@ -56,13 +62,15 @@ for (const asset of assetsToRun) {
   for (const sc of scenarios) {
     const paramSets = autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift);
     console.log(`\n── Monte Carlo [${sc.label}]  drift=${sc.annualDrift}%  sims=${sim.numSims}  paramSets=${paramSets.length}`);
-    const simResults = runMonteCarlo({
+    const simStart = Date.now();
+    const simResults = await runMonteCarlo({
       candles: simData, paramSets,
       investment: BASE_INVESTMENT, feeRate: cfg.feeRate,
       numSims: sim.numSims, hoursAhead: sim.hoursAhead,
       blockSize: sim.blockSize, seed: sim.seed,
       annualDrift: sc.annualDrift,
     });
+    console.log(`  Sim time: ${Date.now() - simStart}ms`);
 
     console.log('\n  Label              P10    P25  Median    P75    P90  P(≥8%)');
     console.log('  ' + '─'.repeat(65));
@@ -88,4 +96,11 @@ for (const asset of assetsToRun) {
       if (r.investment) console.log(`           investment ${fmt(r.investment)} ${Q} → ~${fmt(r.annualProfit!)} ${Q}/year`);
     }
   }
+
+  } catch (e: any) {
+    console.error(`[run] asset=${asset.name} error:`, e);
+  }
 }
+}
+
+main();

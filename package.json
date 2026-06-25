@@ -1,6 +1,6 @@
 {
   "name": "grid-backtest",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "scripts": {
     "start": "ts-node run.ts",
     "build": "tsc",
@@ -8,16 +8,17 @@
     "server": "ts-node server.ts"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/multer": "^2.1.0",
-    "@types/node": "^20.12.0",
-    "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   },
   "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^20.12.0",
     "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "multer": "^2.1.1"
+    "multer": "^2.1.1",
+    "ts-node": "^10.9.2"
   }
 }
