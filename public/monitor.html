@@ -23,6 +23,14 @@
   .chartbox h2 { font-size: 13px; margin: 0 0 12px; color: #334155; font-weight: 600; }
   .chartbox .c { position: relative; height: 260px; }
   .status { font-size: 11px; color: #94a3b8; }
+  .logbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .logbar select { padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; }
+  .logbar button { padding: 5px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; background: #f8fafc; cursor: pointer; }
+  .logbar button:hover { background: #f1f5f9; }
+  .logbar label { font-size: 12px; color: #475569; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .logview { background: #0f172a; color: #cbd5e1; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+             font-size: 11px; line-height: 1.6; border-radius: 8px; padding: 12px 14px;
+             height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -48,7 +56,23 @@
     <h2>Memory usage (%)</h2>
     <div class="c"><canvas id="memChart"></canvas></div>
   </div>
+
+  <div class="chartbox">
+    <h2>Logs</h2>
+    <div class="logbar">
+      <select id="logDate" aria-label="Log file date"></select>
+      <button id="logRefreshBtn">Refresh</button>
+      <label><input type="checkbox" id="logAutoRefresh" checked> Auto-refresh (5s)</label>
+      <span class="status" id="logStatus"></span>
+    </div>
+    <div class="logview" id="logView">Loading…</div>
+  </div>
 </div>
+
+<footer style="position:relative;text-align:center;padding:12px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;background:#fff">
+  Grid Trading Simulation &nbsp;·&nbsp; v<span id="appVersion">—</span> &nbsp;·&nbsp; model <span id="appModel">—</span>
+  <a href="/" title="Dashboard" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#94a3b8;text-decoration:none">&larr; Dashboard</a>
+</footer>
 
 <script>
 (function(){
@@ -136,6 +160,70 @@
 
   tick();
   setInterval(tick, POLL_MS);
+
+  fetch('/api/config').then(function(r){ return r.json(); }).then(function(c){
+    if(c.version) document.getElementById('appVersion').textContent = c.version;
+    if(c.model) document.getElementById('appModel').textContent = c.model;
+  }).catch(function(e){ console.error('failed to load /api/config', e); });
+
+  // ── Logs ──────────────────────────────────────────────────────────────
+  var LOG_POLL_MS = 5000;
+  var latestDate = null;
+  var logTimer = null;
+
+  function fmtLogSize(b){ return fmtBytes(b); }
+
+  async function loadLogDates(){
+    var sel = document.getElementById('logDate');
+    try {
+      var r = await fetch('/api/logs');
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      var files = await r.json();
+      if(!files.length){ sel.innerHTML = '<option value="">no logs yet</option>'; document.getElementById('logView').textContent = 'No log files yet.'; return; }
+      latestDate = files[0].date;
+      sel.innerHTML = files.map(function(f){
+        return '<option value="'+f.date+'">'+f.date+' ('+fmtLogSize(f.sizeBytes)+')</option>';
+      }).join('');
+      sel.value = latestDate;
+      await logTick();
+    } catch(e){
+      sel.innerHTML = '<option value="">failed to load</option>';
+      document.getElementById('logView').textContent = 'Failed to load log list: '+e.message;
+    }
+  }
+
+  async function refreshLog(){
+    var date = document.getElementById('logDate').value;
+    if(!date) return;
+    var view = document.getElementById('logView');
+    var atBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 20;
+    try {
+      var r = await fetch('/api/logs/'+date+'?lines=500');
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      var d = await r.json();
+      view.textContent = d.content || '(empty)';
+      document.getElementById('logStatus').textContent = 'showing last '+Math.min(500, d.totalLines)+' of '+d.totalLines+' lines';
+      if(atBottom) view.scrollTop = view.scrollHeight;
+    } catch(e){
+      document.getElementById('logStatus').textContent = 'refresh failed: '+e.message;
+    }
+  }
+
+  // Re-schedules itself after each refresh (rather than a plain setInterval)
+  // so a slow fetch can't pile up overlapping requests.
+  async function logTick(){
+    if(logTimer){ clearTimeout(logTimer); logTimer = null; }
+    await refreshLog();
+    var date = document.getElementById('logDate').value;
+    var wantAuto = document.getElementById('logAutoRefresh').checked && date && date === latestDate;
+    if(wantAuto) logTimer = setTimeout(logTick, LOG_POLL_MS);
+  }
+
+  document.getElementById('logDate').addEventListener('change', logTick);
+  document.getElementById('logRefreshBtn').addEventListener('click', logTick);
+  document.getElementById('logAutoRefresh').addEventListener('change', logTick);
+
+  loadLogDates();
 })();
 </script>
 </body>

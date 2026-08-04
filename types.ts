@@ -168,6 +168,62 @@ export interface Scenario {
   annualDrift: number;   // % เช่น 0 = neutral, 80 = +80%/ปี
 }
 
+// One rolling-window backtest result (walk-forward analysis).
+export interface WalkForwardPeriod {
+  start: string;
+  end: string;
+  minPrice: number;
+  maxPrice: number;
+  numGrids: number;
+  apy: number;
+  totalApy: number;
+  pnl: number;
+  totalPnl: number;
+  totalReturnPct: number;        // totalPnl as % of capital (not annualized) — what targetProfit is checked against
+  trades: number;
+  capitalTurnover: number;       // trade volume / capital — how many times capital cycled through trades
+  meetsApy: boolean | null;      // null when no targetApy was set
+  meetsProfit: boolean | null;   // null when no targetProfit was set
+  meetsTarget: boolean;          // AND of whichever of meetsApy/meetsProfit are non-null
+}
+
+// One unit of work handed to a walkforward-worker.ts thread — a single window's backtest.
+export interface WalkForwardTask {
+  index: number;   // position in the original chronological window order
+  assetName: string;
+  start: string;
+  end: string;
+  cfg: Pick<Config, 'backtest' | 'feeRate' | 'slippage'>;
+  investment: number;
+  targetApy?: number;
+  targetProfit?: number;
+}
+
+export interface WalkForwardTaskResult {
+  index: number;
+  period?: WalkForwardPeriod;
+  error?: string;
+}
+
+export interface WalkForwardSummary {
+  totalPeriods: number;
+  periodsMet: number;
+  passRate: number;   // periodsMet / totalPeriods * 100
+  avgApy: number;
+  avgTotalApy: number;
+  bestPeriod: WalkForwardPeriod;
+  worstPeriod: WalkForwardPeriod;
+}
+
+export interface WalkForwardResult {
+  asset: string;
+  windowMonths: number;
+  targetApy: number | null;
+  targetProfit: number | null;
+  windows: WalkForwardPeriod[];
+  summary: WalkForwardSummary;
+}
+
 export interface Config {
   assets: Asset[];
   feeRate: number;
@@ -180,6 +236,7 @@ export interface Config {
     numGrids?: number;
   };
   simulation: {
+    enabled?: boolean;
     trainingPeriod?: { start?: string; end?: string };
     targetApy: number;
     targetProfit?: number;

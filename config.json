@@ -13,6 +13,7 @@
     }
   },
   "simulation": {
+    "enabled": false,
     "trainingPeriod": {
       "start": "2024-06-01"
     },

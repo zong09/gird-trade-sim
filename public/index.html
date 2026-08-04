@@ -121,6 +121,7 @@
   <button class="tab-btn tab-active" id="tabDashboard" onclick="switchTab('dashboard')">Dashboard</button>
   <button class="tab-btn" id="tabHistory" onclick="switchTab('history')">History</button>
   <button class="tab-btn" id="tabFiles" onclick="switchTab('files')">Data Files</button>
+  <button class="tab-btn" id="tabWalkForward" onclick="switchTab('walkforward')">Walk-Forward</button>
 </nav>
 
 <div class="layout" id="layout">
@@ -142,9 +143,12 @@
     <div class="field"><label>+% above first price</label><input type="number" id="upPct" min="5" max="200" step="5"></div>
     <div class="field"><label>No. of Grids <small style="color:#94a3b8">(blank = auto)</small></label><input type="number" id="numGrids" min="5" max="200" step="5" placeholder="auto"></div>
 
-    <div class="section-title">Simulation</div>
-    <div class="field"><label>Target APY (%)</label><input type="number" id="targetApy" step="1"></div>
-    <div class="field"><label>No. of Simulations</label><input type="number" id="numSims" step="50"></div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+      Simulation
+      <label for="enableSim" style="font-size:12px;font-weight:400;cursor:pointer;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="enableSim" onchange="toggleSimFields()"> Enable
+      </label>
+    </div>
     <div class="field">
       <label id="capitalLabel">Capital</label>
       <div style="display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;overflow:hidden">
@@ -152,21 +156,25 @@
         <span id="capitalCurrency" style="padding:0 10px;font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-left:1px solid #e2e8f0;height:100%;display:flex;align-items:center;white-space:nowrap">THB</span>
       </div>
     </div>
-    <div class="field">
-      <label id="targetProfitLabel">Target Profit / year <small style="color:#94a3b8">(optional)</small></label>
-      <div style="display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;overflow:hidden">
-        <input type="number" id="targetProfit" step="100" placeholder="for required capital calc" style="flex:1;border:none;padding:6px 10px;font-size:13px;color:#1e293b;background:transparent;outline:none">
-        <span id="targetProfitCurrency" style="padding:0 10px;font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-left:1px solid #e2e8f0;height:100%;display:flex;align-items:center;white-space:nowrap">THB</span>
+    <div id="simFields" style="display:none">
+      <div class="field"><label>Target APY (%)</label><input type="number" id="targetApy" step="1"></div>
+      <div class="field"><label>No. of Simulations</label><input type="number" id="numSims" step="50"></div>
+      <div class="field">
+        <label id="targetProfitLabel">Target Profit / year <small style="color:#94a3b8">(optional)</small></label>
+        <div style="display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;overflow:hidden">
+          <input type="number" id="targetProfit" step="100" placeholder="for required capital calc" style="flex:1;border:none;padding:6px 10px;font-size:13px;color:#1e293b;background:transparent;outline:none">
+          <span id="targetProfitCurrency" style="padding:0 10px;font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-left:1px solid #e2e8f0;height:100%;display:flex;align-items:center;white-space:nowrap">THB</span>
+        </div>
       </div>
-    </div>
-    <div class="field">
-      <label>Bull Drift (%/year) <small style="color:#94a3b8">(0 = off)</small></label>
-      <input type="number" id="bullDrift" min="0" max="500" step="10">
-      <small style="color:#94a3b8;line-height:1.5;display:block;margin-top:4px">
-        Grid center = current price × √(1 + drift%)<br>
-        e.g. drift 80% → center shifts +34% (√1.8)<br>
-        Positions the grid where price is likely to trade during the year.
-      </small>
+      <div class="field">
+        <label>Bull Drift (%/year) <small style="color:#94a3b8">(0 = off)</small></label>
+        <input type="number" id="bullDrift" min="0" max="500" step="10">
+        <small style="color:#94a3b8;line-height:1.5;display:block;margin-top:4px">
+          Grid center = current price × √(1 + drift%)<br>
+          e.g. drift 80% → center shifts +34% (√1.8)<br>
+          Positions the grid where price is likely to trade during the year.
+        </small>
+      </div>
     </div>
 
     <button class="btn-run" id="btnRun" onclick="runAll()">▶ Run</button>
@@ -181,19 +189,26 @@
 let charts = {};
 let currentTab = 'dashboard';
 
+function toggleSimFields() {
+  const on = document.getElementById('enableSim').checked;
+  document.getElementById('simFields').style.display = on ? '' : 'none';
+}
+
 function logout() {
   fetch('/api/logout', { method: 'POST' }).finally(() => { location.href = '/login.html'; });
 }
 
 function switchTab(tab) {
   currentTab = tab;
-  document.getElementById('tabDashboard').className = 'tab-btn' + (tab === 'dashboard' ? ' tab-active' : '');
-  document.getElementById('tabHistory').className   = 'tab-btn' + (tab === 'history'   ? ' tab-active' : '');
-  document.getElementById('tabFiles').className     = 'tab-btn' + (tab === 'files'     ? ' tab-active' : '');
+  document.getElementById('tabDashboard').className   = 'tab-btn' + (tab === 'dashboard'   ? ' tab-active' : '');
+  document.getElementById('tabHistory').className     = 'tab-btn' + (tab === 'history'     ? ' tab-active' : '');
+  document.getElementById('tabFiles').className       = 'tab-btn' + (tab === 'files'       ? ' tab-active' : '');
+  document.getElementById('tabWalkForward').className = 'tab-btn' + (tab === 'walkforward' ? ' tab-active' : '');
   const layout = document.getElementById('layout');
-  if (tab === 'files' || tab === 'history') {
+  if (tab === 'files' || tab === 'history' || tab === 'walkforward') {
     layout.classList.add('files-view');
     if (tab === 'history') renderHistoryPage();
+    else if (tab === 'walkforward') renderWalkForwardPage();
     else renderFilesPage();
   } else {
     layout.classList.remove('files-view');
@@ -552,6 +567,7 @@ async function doDelete(name) {
 async function loadConfig() {
   const c   = await fetch('/api/config').then(r => r.json());
   if (c.version) document.getElementById('appVersion').textContent = c.version;
+  if (c.model) document.getElementById('appModel').textContent = c.model;
   const sel = document.getElementById('asset');
   sel.innerHTML = c.assets.map(a => `<option value="${a.name}">${a.name}</option>`).join('');
   const updateAssetUI = () => {
@@ -579,6 +595,8 @@ async function loadConfig() {
   document.getElementById('targetProfit').value = c.simulation.targetProfit ?? '';
   const bullScenario = (c.simulation.scenarios ?? []).find(s => s.annualDrift > 0);
   document.getElementById('bullDrift').value = bullScenario ? bullScenario.annualDrift : 0;
+  document.getElementById('enableSim').checked = c.simulation.enabled ?? false;
+  toggleSimFields();
 }
 
 function buildConfig(base) {
@@ -596,18 +614,24 @@ function buildConfig(base) {
     if (ng) base.backtest.auto.numGrids = +ng;
     else    delete base.backtest.auto.numGrids;
   }
-  base.simulation.targetApy    = +document.getElementById('targetApy').value;
-  base.simulation.numSims      = +document.getElementById('numSims').value;
   base.simulation.investment   = +document.getElementById('capital').value || 100000;
-  base.simulation.targetProfit = +document.getElementById('targetProfit').value || null;
-  const drift = +document.getElementById('bullDrift').value;
-  if (drift > 0) {
-    base.simulation.scenarios = [
-      { label: 'Base', annualDrift: 0 },
-      { label: `Bull +${drift}%`, annualDrift: drift },
-    ];
+  const enableSim = document.getElementById('enableSim').checked;
+  base.simulation.enabled = enableSim;
+  if (enableSim) {
+    base.simulation.targetApy    = +document.getElementById('targetApy').value;
+    base.simulation.numSims      = +document.getElementById('numSims').value;
+    base.simulation.targetProfit = +document.getElementById('targetProfit').value || null;
+    const drift = +document.getElementById('bullDrift').value;
+    if (drift > 0) {
+      base.simulation.scenarios = [
+        { label: 'Base', annualDrift: 0 },
+        { label: `Bull +${drift}%`, annualDrift: drift },
+      ];
+    } else {
+      base.simulation.scenarios = [{ label: 'Base', annualDrift: 0 }];
+    }
   } else {
-    base.simulation.scenarios = [{ label: 'Base', annualDrift: 0 }];
+    base.simulation.scenarios = [];
   }
   return base;
 }
@@ -621,7 +645,8 @@ async function runAll() {
       `<div class="progress-pct">${pct}%</div><div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`;
     main.innerHTML = `<div class="status"><div class="spinner"></div><p style="margin-top:16px">${msg}</p>${bar}</div>`;
   };
-  setProgress(null, 'Running backtest + simulation…');
+  const enableSim = document.getElementById('enableSim').checked;
+  setProgress(null, enableSim ? 'Running backtest + simulation…' : 'Running backtest…');
   try {
     const base = await fetch('/api/config').then(r => r.json());
     const asset = document.getElementById('asset').value;
@@ -653,12 +678,10 @@ async function runAll() {
         if (!payload) continue;
         const obj = JSON.parse(payload);
         if (event === 'progress') {
-          if (obj.phase === 'backtest') {
-            setProgress(0, 'Running backtest…');
-          } else {
-            const pct = obj.overallTotal ? Math.round(obj.overallDone / obj.overallTotal * 100) : 0;
-            setProgress(pct, 'Running simulation…');
-          }
+          const pct      = obj.overallTotal ? Math.round(obj.overallDone / obj.overallTotal * 100) : 0;
+          const simLabel = obj.label ? ` (${obj.label})` : '';
+          const msg      = obj.phase === 'backtest' ? 'Running backtest…' : `Running simulation${simLabel}…`;
+          setProgress(pct, msg);
         } else if (event === 'done') {
           data = obj;
         } else if (event === 'error') {
@@ -762,6 +785,230 @@ async function deleteRun(id, ev) {
     await fetch('/api/runs/' + id, { method:'DELETE' });
     renderHistoryPage();
   } catch(e) { alert('Delete failed: ' + e.message); }
+}
+
+// ── Walk-forward (rolling window) backtest ────────────────────────────────
+let _wfAsset = null;
+let _wfData = null;
+let _wfSort = { field: null, dir: 1 };
+const WF_COLUMNS = [
+  { field: 'period',         label: 'Period',         key: p => p.start },
+  { field: 'apy',            label: 'APY',            key: p => p.apy },
+  { field: 'totalApy',       label: 'Total APY',      key: p => p.totalApy },
+  { field: 'pnl',            label: 'PNL',            key: p => p.pnl },
+  { field: 'totalPnl',       label: 'Total PNL',      key: p => p.totalPnl },
+  { field: 'totalReturnPct', label: 'Total Return %', key: p => p.totalReturnPct },
+  { field: 'capitalTurnover', label: 'Capital Turnover', key: p => p.capitalTurnover },
+  { field: 'numGrids',       label: 'Grids',          key: p => p.numGrids },
+  { field: 'priceRange',     label: 'Price Range',    key: p => p.minPrice },
+  { field: 'target',         label: 'Target',         key: p => p.meetsTarget ? 1 : 0 },
+];
+
+function sortWalkForward(field) {
+  if (!_wfData) return;
+  const col = WF_COLUMNS.find(c => c.field === field);
+  if (!col) return;
+  _wfSort = _wfSort.field === field ? { field, dir: -_wfSort.dir } : { field, dir: 1 };
+  _wfData.windows = [..._wfData.windows].sort((a, b) => {
+    const av = col.key(a), bv = col.key(b);
+    if (av < bv) return -_wfSort.dir;
+    if (av > bv) return _wfSort.dir;
+    return 0;
+  });
+  renderWalkForwardResults(_wfData);
+}
+
+async function renderWalkForwardPage() {
+  const main = document.getElementById('main');
+  main.innerHTML = '<div class="status"><div class="spinner"></div></div>';
+  let cfg, files;
+  try { [cfg, files] = await Promise.all([fetch('/api/config').then(r => r.json()), fetch('/api/files').then(r => r.json())]); }
+  catch(e) { main.innerHTML = `<div class="error-box">Failed to load config: ${e.message}</div>`; return; }
+
+  if (!cfg.assets.length) {
+    main.innerHTML = '<div class="card"><h3>Walk-Forward Backtest</h3><p style="color:#94a3b8;font-size:13px">No assets yet — add one in Data Files.</p></div>';
+    return;
+  }
+
+  const boundsByName  = new Map(files.map(f => [f.name, f]));
+  const selectedAsset = _wfAsset && cfg.assets.some(a => a.name === _wfAsset) ? _wfAsset : cfg.assets[0].name;
+  const bounds = boundsByName.get(selectedAsset) || {};
+
+  main.innerHTML = `
+    <div style="max-width:1400px;margin:0 auto;padding:24px">
+      <h2 style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:20px">Walk-Forward Backtest</h2>
+      <div class="card">
+        <h3>Slide a fixed-length backtest across all available history</h3>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:end">
+          <div class="field" style="margin:0">
+            <label>Asset</label>
+            <select id="wfAsset">${cfg.assets.map(a => `<option value="${a.name}" ${a.name === selectedAsset ? 'selected' : ''}>${a.name}</option>`).join('')}</select>
+          </div>
+          <div class="field" style="margin:0">
+            <label>Window (months)</label>
+            <input type="number" id="wfMonths" min="1" step="1" value="12">
+          </div>
+          <div class="field" style="margin:0">
+            <label>No. of Grids</label>
+            <input type="number" id="wfNumGrids" min="1" step="5" value="50">
+          </div>
+          <div class="field" style="margin:0">
+            <label>Start Period <small style="color:#94a3b8">(default: oldest data)</small></label>
+            <input type="date" id="wfStartPeriod" min="${bounds.first ?? ''}" max="${bounds.last ?? ''}" value="${bounds.first ?? ''}">
+          </div>
+          <div class="field" style="margin:0">
+            <label>Target APY (%) <small style="color:#94a3b8">(optional)</small></label>
+            <input type="number" id="wfTargetApy" step="1" placeholder="e.g. 10">
+          </div>
+          <div class="field" style="margin:0">
+            <label>Target PL (%) <small style="color:#94a3b8">(optional)</small></label>
+            <input type="number" id="wfTargetProfit" step="1" placeholder="e.g. 20">
+          </div>
+        </div>
+        <button class="btn-run" id="btnWfRun" style="max-width:200px" onclick="runWalkForward()">▶ Run</button>
+      </div>
+      <div id="wfResults"></div>
+    </div>
+  `;
+
+  document.getElementById('wfAsset').onchange = e => { _wfAsset = e.target.value; renderWalkForwardPage(); };
+}
+
+async function runWalkForward() {
+  const btn             = document.getElementById('btnWfRun');
+  const asset           = document.getElementById('wfAsset').value;
+  const windowMonths    = +document.getElementById('wfMonths').value;
+  const targetApyVal    = document.getElementById('wfTargetApy').value;
+  const targetProfitVal = document.getElementById('wfTargetProfit').value;
+  const numGrids        = +document.getElementById('wfNumGrids').value;
+  const startPeriod     = document.getElementById('wfStartPeriod').value;
+  _wfAsset = asset;
+
+  if (!windowMonths || windowMonths < 1) { alert('Enter a valid window length in months'); return; }
+
+  const results = document.getElementById('wfResults');
+  const setProgress = (pct, msg) => {
+    const bar = pct == null ? '' :
+      `<div class="progress-pct">${pct}%</div><div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`;
+    results.innerHTML = `<div class="status"><div class="spinner"></div><p style="margin-top:16px">${msg}</p>${bar}</div>`;
+  };
+  btn.disabled = true; btn.textContent = 'Running…';
+  setProgress(null, 'Running rolling backtests…');
+
+  try {
+    const base = await fetch('/api/config').then(r => r.json());
+    if (base.backtest.auto && numGrids) base.backtest.auto.numGrids = numGrids;
+    const body = {
+      asset, config: base, windowMonths,
+      targetApy:    targetApyVal    ? +targetApyVal    : undefined,
+      targetProfit: targetProfitVal ? +targetProfitVal : undefined,
+      startDate:    startPeriod     || undefined,
+    };
+    const res = await fetch('/api/walkforward/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', data = null, errMsg = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line.
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, sep); buf = buf.slice(sep + 2);
+        let event = 'message', payload = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) payload += line.slice(5).trim();
+        }
+        if (!payload) continue;
+        const obj = JSON.parse(payload);
+        if (event === 'progress') {
+          const pct = obj.total ? Math.round(obj.done / obj.total * 100) : 0;
+          setProgress(pct, `Running window ${obj.done}/${obj.total}…`);
+        } else if (event === 'done') {
+          data = obj;
+        } else if (event === 'error') {
+          errMsg = obj.message;
+        }
+      }
+    }
+    if (errMsg) throw new Error(errMsg);
+    if (!data) throw new Error('No result received');
+    _wfSort = { field: null, dir: 1 };
+    renderWalkForwardResults(data);
+  } catch(e) {
+    results.innerHTML = `<div class="error-box">Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Run';
+  }
+}
+
+function renderWalkForwardResults(data) {
+  _wfData = data;
+  const results = document.getElementById('wfResults');
+  const Q = data.asset.split('/')[1] ?? 'THB';
+  const s = data.summary;
+
+  const targetNote = [];
+  if (data.targetApy != null) targetNote.push(`APY ≥ ${data.targetApy}%`);
+  if (data.targetProfit != null) targetNote.push(`PL ≥ ${data.targetProfit}%`);
+  const hasTarget = targetNote.length > 0;
+
+  const badge = p => hasTarget
+    ? `<span class="badge" style="background:${p.meetsTarget ? '#dcfce7' : '#fef2f2'};color:${p.meetsTarget ? '#15803d' : '#dc2626'}">${p.meetsTarget ? 'Met' : 'Missed'}</span>`
+    : '<span style="color:#cbd5e1">—</span>';
+
+  const rows = data.windows.map(p => `
+    <tr style="border-top:1px solid #f1f5f9">
+      <td style="padding:8px 10px;font-size:12px;white-space:nowrap">${p.start} → ${p.end}</td>
+      <td style="padding:8px 10px;font-weight:600;color:#10b981">${p.apy}%</td>
+      <td style="padding:8px 10px;font-weight:600;color:${p.totalApy >= 0 ? '#10b981' : '#ef4444'}">${p.totalApy}%</td>
+      <td style="padding:8px 10px;font-size:12px">${fmt(p.pnl)} ${Q}</td>
+      <td style="padding:8px 10px;font-size:12px">${fmt(p.totalPnl)} ${Q}</td>
+      <td style="padding:8px 10px;font-weight:600;color:${p.totalReturnPct >= 0 ? '#10b981' : '#ef4444'}">${p.totalReturnPct}%</td>
+      <td style="padding:8px 10px;font-size:12px;color:#94a3b8">${p.capitalTurnover.toFixed(2)}x</td>
+      <td style="padding:8px 10px;font-size:12px;color:#94a3b8">${p.numGrids}</td>
+      <td style="padding:8px 10px;font-size:12px;color:#94a3b8">${fmtPrice(p.minPrice)} – ${fmtPrice(p.maxPrice)} ${Q}</td>
+      <td style="padding:8px 10px">${badge(p)}</td>
+    </tr>`).join('');
+
+  results.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin:20px 0 12px">
+      <span style="background:#0f172a;color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:6px">Walk-Forward</span>
+      <span style="font-size:12px;color:#94a3b8">${data.asset} · ${data.windowMonths}-month windows, sliding 1 month · ${s.totalPeriods} periods</span>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Avg Realized APY</div><div class="value green">${s.avgApy.toFixed(2)}%</div><div class="sub">Avg Total APY ${s.avgTotalApy.toFixed(2)}%</div></div>
+      <div class="kpi"><div class="label">${hasTarget ? 'Met Target' : 'Periods Run'}</div><div class="value ${hasTarget ? (s.passRate >= 50 ? 'green' : 'red') : ''}">${hasTarget ? `${s.periodsMet}/${s.totalPeriods}` : s.totalPeriods}</div><div class="sub">${hasTarget ? `${s.passRate.toFixed(0)}% pass rate · needs ${targetNote.join(' and ')}` : 'set a target APY or PL above to see pass/fail'}</div></div>
+      <div class="kpi"><div class="label">Best / Worst APY</div><div class="value" style="font-size:15px">${s.bestPeriod.apy}% / ${s.worstPeriod.apy}%</div><div class="sub">${s.bestPeriod.start} vs ${s.worstPeriod.start}</div></div>
+    </div>
+    <div class="card">
+      <h3>Rolling Periods (${s.totalPeriods})</h3>
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="text-align:left;font-size:11px;color:#94a3b8;text-transform:uppercase">
+          ${WF_COLUMNS.map(c => {
+            const active = _wfSort.field === c.field;
+            let arrow = '<span style="color:#cbd5e1;font-size:13px">↕</span>';
+            if (active) {
+              const glyph = _wfSort.dir === 1 ? '▲' : '▼';
+              arrow = `<span style="color:#3b82f6;font-size:13px">${glyph}</span>`;
+            }
+            return `<th style="padding:8px 10px;cursor:pointer;user-select:none;white-space:nowrap${active ? ';color:#0f172a' : ''}" onclick="sortWalkForward('${c.field}')">${c.label}&nbsp;${arrow}</th>`;
+          }).join('')}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div>
+    </div>
+  `;
 }
 
 const fmt = n => Math.round(n).toLocaleString('en-US');

@@ -15,6 +15,7 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 - **Monte Carlo** — Block bootstrap resampling (configurable simulations, 1-year forward)
 - **Scenario Analysis** — Base (neutral) and Bull case with configurable annual drift %; grid center auto-shifts to geometric midpoint of expected range
 - **Auto Grid Config** — Sweeps multiple width % and grid count combinations; picks best per scenario
+- **Walk-Forward Analysis** — Slide a fixed-length backtest (in months) across an asset's entire history, 1 month at a time, to see how the strategy would've performed starting from every point in time. Windows run in parallel across all CPU cores (`worker_threads`) for speed. Configurable grid count (default 50) and start period (defaults to the asset's oldest candle); optional target APY (%) / target PL (% total return) highlight which periods hit the goal, with a pass-rate summary, best/worst period, and a per-period price-range + total-return-% breakdown
 - **Configurable Capital** — Set investment amount in the UI; recommendation cards show estimated annual profit for both realized and total APY
 - **SQLite candle store** — All candles live in `data/candles.db` (better-sqlite3), keyed by asset name; backtest/sim query only the needed date range instead of parsing whole files
 - **Binance sync** — Search any Binance pair and pull monthly klines from data.binance.vision straight into the DB, with live progress (CLI or a "Sync" button in the dashboard)
@@ -23,6 +24,7 @@ Backtest and Monte Carlo simulation for crypto grid trading strategies. Supports
 - **Processing-time logs** — backtest and simulation each log their elapsed time (ms) to the server console / CLI output, so you can spot bottlenecks per run
 - **Fast Monte Carlo** — simulation reuses candle arrays across paramSets and skips per-day snapshot building in the inner backtests (results identical), cutting allocation/GC overhead on CPU-bound runs
 - **Web Dashboard** — Single-page UI with Chart.js, scenario tabs, recommendation cards, and live % progress bar during runs
+- **System Monitor** — `/monitor.html` shows live CPU/RAM/process-RSS/uptime cards and charts, plus a Logs section to browse and tail any day's server log (`data/logs/YYYY-MM-DD.log`) right in the browser, auto-refreshing while viewing today's file
 
 ## Setup
 

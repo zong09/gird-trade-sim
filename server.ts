@@ -9,9 +9,10 @@ import { loadCandles, parseCandleData, parseCsvData, validateCandles } from './l
 import { listSymbols, insertCandles, deleteSymbol,
          saveBacktestRun, listBacktestRuns, getBacktestRun, deleteBacktestRun } from './db';
 import { searchSymbols, syncKlines }                     from './binance';
-import { runBacktest, resolveGridParams }                from './engine';
+import { runBacktest, resolveGridParams, backtestModel }  from './engine';
 import { runMonteCarlo, getRecommendation, autoGenParamSets } from './simulator';
-import { initLogger, requestLogger }                     from './logger';
+import { runWalkForward }                                from './walkforward';
+import { initLogger, requestLogger, listLogFiles, readLogFile } from './logger';
 import { requireAuth, login, logout }                    from './auth';
 
 initLogger();
@@ -67,7 +68,7 @@ const pkgVersion: string = (() => {
 })();
 
 app.get('/api/config', (_req, res) => {
-  res.json({ ...readConfig(), version: pkgVersion });
+  res.json({ ...readConfig(), version: pkgVersion, model: backtestModel() });
 });
 
 // System CPU usage: snapshot os.cpus() times, diff against the previous
@@ -112,6 +113,19 @@ app.get('/api/sysmetrics', (_req, res) => {
   });
 });
 
+// List available daily log files (newest first) for the monitor page's log viewer.
+app.get('/api/logs', (_req, res) => {
+  res.json(listLogFiles());
+});
+
+// Tail a day's log file. ?lines=N (default 500, capped at 5000).
+app.get('/api/logs/:date', (req, res) => {
+  const lines = Math.min(Math.max(Number(req.query.lines) || 500, 1), 5000);
+  const result = readLogFile(req.params.date, lines);
+  if (!result) { res.status(404).json({ error: 'Log file not found' }); return; }
+  res.json({ date: req.params.date, ...result });
+});
+
 // Thrown when the requested asset isn't in the config — mapped to HTTP 400.
 class AssetNotFoundError extends Error {}
 
@@ -135,16 +149,26 @@ async function executeRun(
   const bt = runBacktest(btCandles, { ...gridParams, investment, feeRate: cfg.feeRate, slippage: cfg.slippage });
   console.log(`[run] asset=${assetName} model=${bt.model} backtest ${Date.now() - btStart}ms`);
 
+  const sim   = cfg.simulation;
+  const quote = assetName.split('/')[1] ?? 'THB';
+
+  // Fast path: skip simulation entirely when disabled
+  if (!sim.enabled) {
+    const refPrice = btCandles.at(-1)?.close ?? null;
+    onProgress?.({ phase: 'backtest', done: 1, total: 1, overallDone: 1, overallTotal: 1 });
+    return { asset: assetName, quote, backtest: bt, autoGridParams: gridParams, scenarios: [], refPrice, investment };
+  }
+
   // Simulation — auto-generate paramSets from training data
-  const sim       = cfg.simulation;
   const simData = loadCandles(assetName, sim.trainingPeriod ?? {});
   const opts    = { targetApy: sim.targetApy, targetProfit: sim.targetProfit ?? null };
   const scenarios = (sim.scenarios ?? [{ label: 'Base', annualDrift: 0 }]);
 
   // Generate paramSets up front so we know the total sim-step count for overall progress %.
   const scenarioParams = scenarios.map(sc => ({ sc, paramSets: autoGenParamSets(simData, sim.autoParamSets, sc.annualDrift) }));
-  const overallTotal   = scenarioParams.reduce((n, x) => n + x.paramSets.length, 0);
-  onProgress?.({ phase: 'backtest', done: 1, total: 1, overallDone: 0, overallTotal });
+  // +1 so backtest counts as the first step in overall progress
+  const overallTotal   = scenarioParams.reduce((n, x) => n + x.paramSets.length, 0) + 1;
+  onProgress?.({ phase: 'backtest', done: 1, total: 1, overallDone: 1, overallTotal });
 
   const scenarioResults = [];
   let simDone = 0;
@@ -156,7 +180,7 @@ async function executeRun(
       numSims: sim.numSims, hoursAhead: sim.hoursAhead,
       blockSize: sim.blockSize, seed: sim.seed,
       annualDrift: sc.annualDrift,
-      onProgress: (done, total) => onProgress?.({ phase: 'sim', label: sc.label, done, total, overallDone: simDone + done, overallTotal }),
+      onProgress: (done, total) => onProgress?.({ phase: 'sim', label: sc.label, done, total, overallDone: simDone + done + 1, overallTotal }),
     });
     simDone += paramSets.length;
     const recs = (['balanced', 'safe', 'aggressive'] as const)
@@ -165,7 +189,6 @@ async function executeRun(
   }
   console.log(`[run] asset=${assetName} simulation ${Date.now() - simStart}ms (${scenarios.length} scenarios, ${overallTotal} paramSets)`);
 
-  const quote    = assetName.split('/')[1] ?? 'THB';
   const refPrice = simData.length > 0 ? simData[simData.length - 1].close : null;
   return { asset: assetName, quote, backtest: bt, autoGridParams: gridParams, scenarios: scenarioResults, refPrice, investment };
 }
@@ -202,6 +225,37 @@ app.post('/api/run/stream', async (req, res) => {
     send('done', output);
   } catch (e: any) {
     console.error(`[/api/run/stream] asset=${req.body?.asset ?? 'unknown'} error:`, e);
+    send('error', { message: e.message });
+  }
+  res.end();
+});
+
+// POST /api/walkforward/stream  body: { asset, config?, windowMonths, targetApy?, targetProfit? }
+// Rolling-window (walk-forward) backtest: slides a windowMonths-long backtest across all
+// available history, 1 month at a time, and reports every period's result. Backtest-only
+// (no Monte Carlo) so a 60+ window sweep stays fast. config overrides are ad-hoc/never persisted,
+// same as /api/run/stream — windowMonths/targetApy/targetProfit are this tab's own inputs.
+app.post('/api/walkforward/stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const send = (event: string, data: any) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  send('start', { ts: Date.now() });
+  try {
+    const cfg = (req.body?.config as Config | undefined) ?? readConfig();
+    const assetName = req.body?.asset as string;
+    const windowMonths = Number(req.body?.windowMonths);
+    if (!assetName || !cfg.assets.find(a => a.name === assetName)) throw new AssetNotFoundError(`Asset "${assetName}" not found`);
+    if (!Number.isInteger(windowMonths) || windowMonths < 1) throw new Error('windowMonths must be a positive integer');
+    const options = {
+      targetApy: req.body?.targetApy != null ? Number(req.body.targetApy) : undefined,
+      targetProfit: req.body?.targetProfit != null ? Number(req.body.targetProfit) : undefined,
+      startDate: (req.body?.startDate as string | undefined) || undefined,
+    };
+    const output = await runWalkForward(cfg, assetName, windowMonths, options, (done, total) => send('progress', { done, total }));
+    send('done', output);
+  } catch (e: any) {
+    console.error(`[/api/walkforward/stream] asset=${req.body?.asset ?? 'unknown'} error:`, e);
     send('error', { message: e.message });
   }
   res.end();

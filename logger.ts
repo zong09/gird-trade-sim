@@ -76,10 +76,39 @@ export function initLogger(): void {
 }
 
 // log each request once it finishes: method url status durationMs
+// skips noisy, frequently-polled paths so they don't spam the file being logged to
+const SKIP_LOGGING_PATHS = ['/api/logs', '/api/sysmetrics'];
 export const requestLogger: express.RequestHandler = (req, res, next) => {
+  if (SKIP_LOGGING_PATHS.some(p => req.path.startsWith(p))) { next(); return; }
   const start = Date.now();
   res.on('finish', () => {
     console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
   });
   next();
 };
+
+export interface LogFileInfo {
+  date: string;   // YYYY-MM-DD
+  sizeBytes: number;
+}
+
+// List day-files on disk, newest first.
+export function listLogFiles(): LogFileInfo[] {
+  if (!fs.existsSync(LOG_DIR)) return [];
+  return fs.readdirSync(LOG_DIR)
+    .map(f => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map(m => ({ date: m[1], sizeBytes: fs.statSync(path.join(LOG_DIR, m[0])).size }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// Tail the last `maxLines` of a day's log file. Returns null if the date is
+// malformed or the file doesn't exist — date is validated here (not just by
+// the caller) since it flows straight into a filesystem path.
+export function readLogFile(date: string, maxLines: number): { totalLines: number; content: string } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const filePath = path.join(LOG_DIR, `${date}.log`);
+  if (!fs.existsSync(filePath)) return null;
+  const lines = fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
+  return { totalLines: lines.length, content: lines.slice(-maxLines).join('\n') };
+}
